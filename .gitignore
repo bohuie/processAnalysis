@@ -56,8 +56,7 @@ data/csv/**/*.csv
 data/pdf/**/*.pdf
 data/json/**/*.json
 data/images/**/*.png
-outputs/**/**/**/*.png
-outputs/**/**/**/**/*.png
+data/outputs/**/**/**/*
 
 # MacOS
 .DS_Store

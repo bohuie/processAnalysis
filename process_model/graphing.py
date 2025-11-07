@@ -442,7 +442,7 @@ for category, team_files in teams_by_cat.items():
         df["event_list"] = df["event"].apply(normalize_event_field)
 
         # enforce merge rules (PR-only injections)
-        df = enforce_merge_end(df, category=category)
+        #df = enforce_merge_end(df, category=category)
         
         # --- Save cleaned (post-fallback) DataFrame for debugging ---
         # cleaned_out_dir = os.path.join(CAT_OUT, f"year-long-project-team-{team}", "cleaned_csv")
