@@ -9,3 +9,9 @@
 # test if all merge states' relevant timestamps are the very last timestamp in the pr timeline
 
 # test if all the review states' timestamps are after pr states' timestamps
+
+# also make sure the data type is correct -> string vs datetime (make sure its datetime)
+
+
+--> compare pr labels csv with the files under the team folders
+
