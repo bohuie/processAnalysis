@@ -10,7 +10,7 @@ import requests  # NEW: for Ollama API calls
 import json       # NEW: for response handling
 from datetime import datetime
 
-# === HELPER ==========================================================
+# helper
 def append_event(event_list, new_event):
     """Safely append a new label to the event list (avoiding duplicates)."""
     if not isinstance(event_list, list):
@@ -387,6 +387,8 @@ for TEAM_FOLDER in team_folders:
     combined["created_at"].fillna(method="ffill", inplace=True)
     combined["pr_author"].replace("", np.nan, inplace=True)
     combined["pr_author"].fillna("unknown", inplace=True)
+    
+    # problem could be HERE
     combined["event"] = combined["event"].apply(lambda x: str(x) if isinstance(x, list) else x)
     combined = combined.sort_values("created_at").reset_index(drop=True)
 

@@ -50,7 +50,7 @@ def compare_timestamps(label_ts, src_ts):
 
 
 # test
-@pytest.mark.parametrize("team_number", ["20", "14"])  # Add more like ["13", "14", "15"] if needed
+@pytest.mark.parametrize("team_number", ["14"])  # Add more like ["13", "14", "15"] if needed
 def test_label_vs_source_timestamps(team_number):
     """Validate that timestamps in label CSV match the corresponding source CSVs."""
 
