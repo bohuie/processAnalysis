@@ -60,13 +60,6 @@ for team_folder in team_folders:
         for b, a in zip(before_sample, after_sample):
             print(f"   {b}  →  {a}")
 
-        if "created_at" in df.columns:
-            print("[INFO] Converting 'created_at' to UTC Z format (if needed)...")
-            df["created_at"] = df["created_at"].apply(
-                lambda x: pd.to_datetime(x, errors='coerce', utc=True).strftime('%Y-%m-%dT%H:%M:%SZ')
-                if pd.notna(x) and not str(x).endswith("Z") else x
-            )
-
         try:
             df.to_csv(file_path, index=False)
             print(f"[SUCCESS] Overwritten cleaned file: {file_path}")
@@ -99,21 +92,6 @@ for team_folder in team_folders:
     prs_df = pd.read_csv(prs_path)
     review_comments_df = pd.read_csv(review_comments_path)
     print(f"[INFO] Commits loaded: {len(commits_df)}, PRs loaded: {len(prs_df)}, Comments loaded: {len(review_comments_df)}")
-
-    for col in ["created_at", "merged_at"]:
-        if col in prs_df.columns:
-            print(f"[INFO] Converting '{col}' in PRs to UTC Z format (if needed)...")
-            prs_df[col] = prs_df[col].apply(
-                lambda x: pd.to_datetime(x, errors='coerce', utc=True).strftime('%Y-%m-%dT%H:%M:%SZ')
-                if pd.notna(x) and not str(x).endswith("Z") else x
-            )
-
-    if "created_at" in review_comments_df.columns:
-        print("[INFO] Converting 'created_at' in review comments to UTC Z format (if needed)...")
-        review_comments_df["created_at"] = review_comments_df["created_at"].apply(
-            lambda x: pd.to_datetime(x, errors='coerce', utc=True).strftime('%Y-%m-%dT%H:%M:%SZ')
-            if pd.notna(x) and not str(x).endswith("Z") else x
-        )
 
     for name, df in [("commits", commits_df), ("prs", prs_df), ("comments", review_comments_df)]:
         if "pr_id" not in df.columns:
@@ -157,7 +135,7 @@ for team_folder in team_folders:
             .rank(method="first")
             .astype(int)
             .map({1: "first", 2: "second", 3: "additional", 4: "additional", 5: "additional", 6: "additional", 7: "additional", 8: "additional", 9: "additional", 10: "additional", 
-                  11: "first", 12: "second", 13: "additional", 14: "additional", 15: "additional", 16: "additional", 17: "additional", 18: "additional", 19: "additional", 20: "additional"}) 
+                  11: "additional", 12: "additional", 13: "additional", 14: "additional", 15: "additional", 16: "additional", 17: "additional", 18: "additional", 19: "additional", 20: "additional"}) 
         )
 
     # --- save results ---
