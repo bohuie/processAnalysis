@@ -1,4 +1,4 @@
-# GitHub Repository Data Extraction Script
+# Main Data Extraction Script
 
 ## Overview
 
