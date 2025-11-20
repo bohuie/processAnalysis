@@ -83,7 +83,7 @@ python event_labelling/Utility/pr_communication_label.py
 ### 3. Code Structure & Branching Analysis  
 Requires a running Ollama instance.
 ```bash
-python event_labelling/CodeStructure&Branching/code_structure_and_branching.py
+python event_labelling/CodeStructure_Branching/code_structure_and_branching.py
 python event_labelling/Utility/csvFix.py
 ```
 
