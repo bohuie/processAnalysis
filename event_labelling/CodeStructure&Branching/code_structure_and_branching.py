@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import pandas as pd
 import numpy as np
@@ -11,6 +12,8 @@ from tqdm import tqdm
 import ollama
 from datetime import datetime, timezone
 from dateutil import parser as date_parser
+
+from event_labelling.Utility.bot_filter import remove_bot_prs, remove_bot_commits
 
 # === SETUP ============================================================
 MODEL_NAME = "llama3.2:3b"
@@ -832,30 +835,8 @@ def process_all_teams():
         print(f"Loading PRs from: {prs_path.name}")
         prs_df = pd.read_csv(prs_path)
         
-        bot_patterns_regex = [
-            r'\[bot\]$',
-            r'^bot[-_]',
-            r'[-_]bot',
-            r'^bot\d',
-            r'dependabot',
-            r'github-actions',
-            r'renovate',
-            r'greenkeeper',
-            r'codecov',
-            r'snyk-bot',
-            r'github-classroom',
-        ]
-
-        original_count = len(prs_df)
-        if 'pr_author' in prs_df.columns:
-            prs_df = prs_df[~prs_df['pr_author'].str.lower().str.contains(
-                '|'.join(bot_patterns_regex), 
-                na=False, 
-                regex=True
-            )]
-            bots_filtered = original_count - len(prs_df)
-            if bots_filtered > 0:
-                print(f"[INFO] Filtered out {bots_filtered} bot PRs")
+        # Filter out bot PRs using utility function
+        prs_df = remove_bot_prs(prs_df, verbose=True)
         
         if "created_at" in prs_df.columns:
             prs_df["created_at"] = prs_df["created_at"].apply(normalize_timestamp_to_utc_z)
@@ -905,16 +886,8 @@ def process_all_teams():
             print(f"Loading commits from: {commits_path.name}")
             commits_df = pd.read_csv(commits_path)
             
-            original_count = len(commits_df)
-            if 'author' in commits_df.columns:
-                commits_df = commits_df[~commits_df['author'].str.lower().str.contains(
-                    '|'.join(bot_patterns_regex), 
-                    na=False, 
-                    regex=True
-                )]
-                bots_filtered = original_count - len(commits_df)
-                if bots_filtered > 0:
-                    print(f"[INFO] Filtered out {bots_filtered} bot commits")
+            # Filter out bot commits using utility function
+            commits_df = remove_bot_commits(commits_df, verbose=True)
             
             commits_df["commit_date"] = pd.to_datetime(commits_df.get("commit_date"), errors="coerce")
 
