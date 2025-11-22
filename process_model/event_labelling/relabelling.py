@@ -2,9 +2,8 @@ import os
 import glob
 import pandas as pd
 import numpy as np
-from ast import literal_eval # Used to safely convert the string representation of a list to an actual list
+from ast import literal_eval 
 
-# --- Helper Functions (Revised) ---
 
 def remove_event_label(event_list, label_to_remove):
     """Removes a specific label from a list if it exists."""
@@ -28,7 +27,7 @@ DATA_FOLDER = os.path.join(PROJECT_ROOT, "data", "csv")
 
 team_folders = glob.glob(os.path.join(DATA_FOLDER, "year-long-project-team-*"))
 if not team_folders:
-    raise FileNotFoundError(f"❌ No team folders found in {DATA_FOLDER}")
+    raise FileNotFoundError(f"No team folders found in {DATA_FOLDER}")
 
 print(f"[INFO] Found {len(team_folders)} team folders:")
 for t in team_folders:
@@ -50,10 +49,8 @@ for TEAM_FOLDER in team_folders:
     reviews_df = pd.read_csv(REVIEWS_PATH)
     relabelled_df = pd.read_csv(LABELLED_PATH)
 
-    # --- Core Logic ---
 
     ## 1. Convert 'event' column to actual Python lists
-    # NOTE: The 'event' column must contain valid list strings (e.g., '["a", "b"]')
     try:
         # Use literal_eval to safely parse the string as a Python literal (a list)
         relabelled_df['event'] = relabelled_df['event'].apply(literal_eval)
@@ -108,7 +105,3 @@ for TEAM_FOLDER in team_folders:
         relabelled_df['event'] = relabelled_df['event'].astype(str)
         relabelled_df.to_csv(RELABELLED_OUTPUT_PATH, index=False)
         print("✅ File saved successfully.")
-
-    # Note: The original print(relabelled_df) and final save logic needs to be moved
-    # inside the loop to save the file for each team, or merged outside if you are
-    # combining all teams' data. I've placed a modified save inside the loop.
