@@ -18,21 +18,6 @@ MODEL_NAME = "llama3.2:3b"
 RUN_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
 ANONYMIZE = True
 
-# === TIMESTAMP NORMALIZATION ==========================================
-def normalize_timestamp_to_utc_z(timestamp_str):
-    """Convert any timestamp format to UTC with Z suffix."""
-    if pd.isna(timestamp_str) or timestamp_str == '' or timestamp_str is None:
-        return None
-    try:
-        dt = date_parser.parse(str(timestamp_str))
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc)
-        else:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-    except:
-        return timestamp_str
-
 # === FILE ENRICHMENT AND CLEANING =====================================
 def clean_review_comments(team_folder):
     """Clean review-comments.csv files by extracting usernames from dict format."""
@@ -818,22 +803,6 @@ def process_all_teams():
                 print(f"[INFO] Filtered out {bots_filtered} bot file changes")
         
         print(f"[INFO] After filtering - PRs: {len(prs_df)}, Commits: {len(commits_df)}, File Changes: {len(commit_file_changes_df)}")
-        
-        # 2. Normalize timestamps to UTC Z format
-        print("[INFO] Normalizing timestamps...")
-        for col in ["created_at", "merged_at"]:
-            if col in prs_df.columns:
-                prs_df[col] = prs_df[col].apply(normalize_timestamp_to_utc_z)
-        
-        # Convert to datetime for processing
-        prs_df["created_at"] = pd.to_datetime(prs_df["created_at"], utc=True, errors="coerce")
-        prs_df["merged_at"] = pd.to_datetime(prs_df["merged_at"], utc=True, errors="coerce")
-        
-        # Filter out PRs with missing/invalid created_at
-        original_pr_count = len(prs_df)
-        prs_df = prs_df.dropna(subset=["created_at"])
-        if len(prs_df) < original_pr_count:
-            print(f"[WARN] Dropped {original_pr_count - len(prs_df)} PRs due to missing/invalid 'created_at' timestamp")
         
         # 3. Anonymization (if enabled)
         if ANONYMIZE and name_map:
