@@ -24,19 +24,100 @@ except ImportError as e:
     sys.exit(1)
 
 
-def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
-    """Save pull requests to CSV file."""
+def calculate_top_file_changes(files: List[dict]) -> tuple:
+    """Calculate the file with most changes and its percentage."""
+    if not files:
+        return None, 0.0
+    
+    total_changes = sum(f.get('changes', 0) for f in files)
+    if total_changes == 0:
+        return None, 0.0
+    
+    top_file = max(files, key=lambda f: f.get('changes', 0))
+    top_file_changes = top_file.get('changes', 0)
+    percentage = (top_file_changes / total_changes) * 100 if total_changes > 0 else 0.0
+    
+    return top_file.get('filename'), percentage
+
+
+def check_documentation_updates(files: List[dict]) -> dict:
+    """Check if documentation files were updated."""
+    doc_patterns = ['.md', 'README', 'CHANGELOG', 'docs/', 'documentation/']
+    
+    has_readme = any('README' in f.get('filename', '').upper() for f in files)
+    
+    doc_files = [
+        f for f in files 
+        if any(pattern.lower() in f.get('filename', '').lower() for pattern in doc_patterns)
+    ]
+    
+    return {
+        'docs_updated': len(doc_files) > 0,
+        'has_readme_changes': has_readme,
+        'doc_files_count': len(doc_files)
+    }
+
+
+def get_unique_reviewers(pr: dict, extractor: PullRequestExtractor) -> List[str]:
+    """Extract unique reviewers from PR reviews."""
+    pr_id = pr.get('number')
+    reviews = extractor.extract_pr_reviews(pr_id)
+    
+    reviewers = set()
+    for review in reviews:
+        user = review.get('user', {})
+        if user and user.get('login'):
+            reviewers.add(user['login'])
+    
+    # Remove the PR author from reviewers if present
+    pr_author = pr.get('user', {}).get('login')
+    reviewers.discard(pr_author)
+    
+    return list(reviewers)
+
+
+def save_prs_to_csv(pull_requests: List[dict], extractor: PullRequestExtractor, filepath: Path):
+    """Save pull requests to CSV file with correct column names and populated data."""
     if not pull_requests:
         print("[WARN] No pull requests to save")
         return
     
     print(f"[INFO] Saving {len(pull_requests)} PRs to CSV: {filepath}")
     
+    # Updated fieldnames to match expected schema
     fieldnames = [
-        'pr_id', 'title', 'state', 'author', 'created_at', 'updated_at',
-        'closed_at', 'merged_at', 'merged_by', 'head_branch', 'base_branch',
-        'commits', 'additions', 'deletions', 'changed_files',
-        'comments', 'review_comments', 'mergeable_state', 'body'
+        'Action',
+        'pr_id',
+        'pr_title',
+        'pr_author',
+        'head_branch',
+        'base_branch',
+        'state',
+        'created_at',
+        'updated_at',
+        'closed_at',
+        'merged_at',
+        'merged_by',
+        'num_commits',
+        'num_reviewers',
+        'reviewers',
+        'pr_description',
+        'mergeable_state',
+        'is_up_to_date',
+        'was_up_to_date_at_merge',
+        'has_conflicts',
+        'is_self_merged',
+        'line_added',
+        'line_deleted',
+        'total_changes',
+        'files_changed',
+        'was_behind_at_merge',
+        'top_file',
+        'top_file_change_%',
+        'docs_updated',
+        'has_readme_changes',
+        'feature_documentation_status',
+        'description'
     ]
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -44,26 +125,66 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
         writer.writeheader()
         
         for pr in pull_requests:
+            pr_id = pr.get('number')
+            pr_author = pr.get('user', {}).get('login') if pr.get('user') else None
+            merged_by = pr.get('merged_by', {}).get('login') if pr.get('merged_by') else None
+            
+            # Get file changes for this PR
+            print(f"[DEBUG] Fetching files for PR #{pr_id}")
+            files = extractor.extract_pr_file_changes(pr_id)
+            
+            # Calculate metrics
+            top_file, top_file_pct = calculate_top_file_changes(files)
+            doc_info = check_documentation_updates(files)
+            
+            # Get reviewers
+            reviewers = get_unique_reviewers(pr, extractor)
+            
+            # Calculate derived fields
+            is_self_merged = (merged_by == pr_author) if merged_by and pr_author else False
+            has_conflicts = pr.get('mergeable_state') in ['dirty', 'conflicting']
+            
+            # Determine feature documentation status
+            feature_doc_status = 'N/A'
+            if pr.get('merged_at'):
+                if doc_info['docs_updated']:
+                    feature_doc_status = 'Documented'
+                else:
+                    feature_doc_status = 'Not Documented'
+            
             row = {
-                'pr_id': pr.get('number'),
-                'title': pr.get('title', ''),
+                'Action': '',  # Empty as per original schema
+                'pr_id': pr_id,
+                'pr_title': pr.get('title', ''),
+                'pr_author': pr_author,
+                'head_branch': pr.get('head', {}).get('ref') if pr.get('head') else None,
+                'base_branch': pr.get('base', {}).get('ref') if pr.get('base') else None,
                 'state': pr.get('state'),
-                'author': pr.get('user', {}).get('login') if pr.get('user') else None,
                 'created_at': pr.get('created_at'),
                 'updated_at': pr.get('updated_at'),
                 'closed_at': pr.get('closed_at'),
                 'merged_at': pr.get('merged_at'),
-                'merged_by': pr.get('merged_by', {}).get('login') if pr.get('merged_by') else None,
-                'head_branch': pr.get('head', {}).get('ref') if pr.get('head') else None,
-                'base_branch': pr.get('base', {}).get('ref') if pr.get('base') else None,
-                'commits': pr.get('commits'),
-                'additions': pr.get('additions'),
-                'deletions': pr.get('deletions'),
-                'changed_files': pr.get('changed_files'),
-                'comments': pr.get('comments'),
-                'review_comments': pr.get('review_comments'),
-                'mergeable_state': pr.get('mergeable_state'),
-                'body': (pr.get('body', '') or '')[:500],  # Truncate to avoid CSV issues
+                'merged_by': merged_by,
+                'num_commits': pr.get('commits', 0),
+                'num_reviewers': len(reviewers),
+                'reviewers': ', '.join(reviewers) if reviewers else '',
+                'pr_description': (pr.get('body', '') or '')[:500],
+                'mergeable_state': pr.get('mergeable_state', ''),
+                'is_up_to_date': '',  # Would need additional API call to determine
+                'was_up_to_date_at_merge': '',  # Historical data not available
+                'has_conflicts': has_conflicts,
+                'is_self_merged': is_self_merged,
+                'line_added': pr.get('additions', 0),
+                'line_deleted': pr.get('deletions', 0),
+                'total_changes': pr.get('additions', 0) + pr.get('deletions', 0),
+                'files_changed': pr.get('changed_files', 0),
+                'was_behind_at_merge': '',  # Historical data not available
+                'top_file': top_file or '',
+                'top_file_change_%': f"{top_file_pct:.2f}" if top_file else '',
+                'docs_updated': doc_info['docs_updated'],
+                'has_readme_changes': doc_info['has_readme_changes'],
+                'feature_documentation_status': feature_doc_status,
+                'description': (pr.get('body', '') or '')[:500],
             }
             writer.writerow(row)
     
@@ -95,6 +216,7 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
         for commit in commits:
             commit_data = commit.get('commit', {})
             author_data = commit_data.get('author', {})
+            stats = commit.get('stats', {})
             
             all_commits.append({
                 'pr_id': pr_id,
@@ -103,9 +225,9 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
                 'commit_author': author_data.get('name', 'Unknown'),
                 'commit_date': author_data.get('date'),
                 'commit_message': commit_data.get('message', '').split('\n')[0][:200],
-                'additions': None,  # Available in commit details
-                'deletions': None,  # Available in commit details
-                'files_changed': None,  # Available in commit details
+                'additions': stats.get('additions'),
+                'deletions': stats.get('deletions'),
+                'files_changed': len(commit.get('files', [])) if commit.get('files') else None,
             })
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -114,6 +236,7 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
         writer.writerows(all_commits)
     
     print(f"[SUCCESS] Saved {len(all_commits)} commits to: {filepath}")
+
 
 def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
     """Extract and save all file changes from PRs to CSV."""
@@ -157,7 +280,7 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
                     'additions': file.get('additions'),
                     'deletions': file.get('deletions'),
                     'changes': file.get('changes'),
-                    'patch_snippet': (file.get('patch', '') or '')[:200],  # First 200 chars
+                    'patch_snippet': (file.get('patch', '') or '')[:200],
                 })
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -167,8 +290,9 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
     
     print(f"[SUCCESS] Saved {len(all_files)} file changes to: {filepath}")
 
+
 def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
-    """Extract and save all comments from PRs to CSV."""
+    """Extract and save all comments from PRs to CSV - includes all review comment types."""
     if not pull_requests:
         print("[WARN] No pull requests to extract comments from")
         return
@@ -177,7 +301,7 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
     
     fieldnames = [
         'pr_id', 'pr_author', 'comment_type', 'comment_id', 'comment_author',
-        'comment_body', 'created_at', 'updated_at'
+        'comment_body', 'created_at', 'updated_at', 'review_state'
     ]
     
     all_comments = []
@@ -200,6 +324,7 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 'comment_body': (comment.get('body', '') or '')[:500],
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
+                'review_state': comment.get('state', ''),
             })
         
         # Issue comments (general PR comments)
@@ -213,7 +338,25 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 'comment_body': (comment.get('body', '') or '')[:500],
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
+                'review_state': '',
             })
+        
+        # Review summaries (from extract_pr_reviews)
+        reviews = extractor.extract_pr_reviews(pr_id)
+        for review in reviews:
+            # Only add if there's a body (to avoid duplicates with review_comments)
+            if review.get('body'):
+                all_comments.append({
+                    'pr_id': pr_id,
+                    'pr_author': pr_author,
+                    'comment_type': 'review_summary',
+                    'comment_id': review.get('id'),
+                    'comment_author': review.get('user', {}).get('login') if review.get('user') else 'Unknown',
+                    'comment_body': (review.get('body', '') or '')[:500],
+                    'created_at': review.get('submitted_at'),
+                    'updated_at': review.get('submitted_at'),
+                    'review_state': review.get('state', ''),
+                })
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -300,9 +443,9 @@ def extract_repository_data(
 
         # Save to CSV
         if save_csv:
-            # 1. Pull Requests CSV
+            # 1. Pull Requests CSV (now with corrected columns and populated data)
             csv_filepath = csv_dir / f"{repo_name}_pull_requests.csv"
-            save_prs_to_csv(pull_requests, csv_filepath)
+            save_prs_to_csv(pull_requests, extractor, csv_filepath)
             results["output_files"].append(f"PRs CSV: {csv_filepath}")
             
             # 2. Commits CSV
@@ -317,7 +460,7 @@ def extract_repository_data(
                 save_file_changes_to_csv(extractor, pull_requests, files_filepath)
                 results["output_files"].append(f"Files CSV: {files_filepath}")
             
-            # 4. Comments CSV
+            # 4. Comments CSV (now includes all review types)
             if include_comments:
                 comments_filepath = csv_dir / f"{repo_name}_comments.csv"
                 save_comments_to_csv(extractor, pull_requests, comments_filepath)
