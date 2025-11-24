@@ -194,25 +194,38 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
             all_comments.append({
                 'pr_id': pr_id,
                 'pr_author': pr_author,
-                'comment_type': 'review',
+                'comment_type': 'inline',
                 'comment_id': comment.get('id'),
                 'comment_author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
-                'comment_body': (comment.get('body', '') or '')[:500],
+                'comment_body': (comment.get('body', '') or ''),
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
             })
         
-        # Issue comments (general PR comments)
+        # Issue comments (PR conversation tab comments)
         for comment in comments.get('issue_comments', []):
             all_comments.append({
                 'pr_id': pr_id,
                 'pr_author': pr_author,
-                'comment_type': 'issue',
+                'comment_type': 'conversation',
                 'comment_id': comment.get('id'),
                 'comment_author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
-                'comment_body': (comment.get('body', '') or '')[:500],
+                'comment_body': (comment.get('body', '') or ''),
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
+            })
+            
+        # Review comments (main review comments from when reviewer clicks "Review Changes")
+        for comment in comments.get('pr_reviews', []):
+            all_comments.append({
+                'pr_id': pr_id,
+                'pr_author': pr_author,
+                'comment_type': 'review',
+                'comment_id': comment.get('id'),
+                'comment_author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
+                'comment_body': (comment.get('body', '') or ''),
+                'created_at': comment.get('submitted_at'),
+                'updated_at': comment.get('submitted_at'),
             })
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -294,14 +307,14 @@ def extract_repository_data(
 
         # Save to JSON
         if save_json:
-            json_filepath = json_dir / f"{repo_name}_pull_requests.json"
+            json_filepath = json_dir / f"{repo_name}_all_pull_requests.json"
             save_prs_to_json(pull_requests, json_filepath)
             results["output_files"].append(f"PRs JSON: {json_filepath}")
 
         # Save to CSV
         if save_csv:
             # 1. Pull Requests CSV
-            csv_filepath = csv_dir / f"{repo_name}_pull_requests.csv"
+            csv_filepath = csv_dir / f"{repo_name}_all_pull_requests.csv"
             save_prs_to_csv(pull_requests, csv_filepath)
             results["output_files"].append(f"PRs CSV: {csv_filepath}")
             
@@ -350,7 +363,7 @@ if __name__ == "__main__":
     # ==================== CONFIGURATION ====================
     
     REPO_OWNER = "COSC-499-W2023" 
-    REPO_NAME = "year-long-project-team-15"
+    REPO_NAME = "year-long-project-team-21"
     OUTPUT_DIR = "./data"
     SAVE_JSON = True
     SAVE_CSV = True

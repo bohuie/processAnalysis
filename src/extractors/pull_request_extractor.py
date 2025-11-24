@@ -539,7 +539,8 @@ class PullRequestExtractor(GitExtractor):
         """
         return {
             "review_comments": self.extract_pr_review_comments(pr_id),
-            "issue_comments": self.extract_pr_issue_comments(pr_id)
+            "issue_comments": self.extract_pr_issue_comments(pr_id),
+            "pr_reviews": self.extract_pr_reviews(pr_id)
         }
 
     def extract_pr_reviews(self, pr_id: int) -> List[Dict]:
