@@ -320,19 +320,19 @@ def extract_repository_data(
             
             # 2. Commits CSV
             if include_commits:
-                commits_filepath = csv_dir / f"{repo_name}_commits.csv"
+                commits_filepath = csv_dir / f"{repo_name}_PR_commits.csv"
                 save_commits_to_csv(extractor, pull_requests, commits_filepath)
                 results["output_files"].append(f"Commits CSV: {commits_filepath}")
             
             # 3. File Changes CSV
             if include_files:
-                files_filepath = csv_dir / f"{repo_name}_file_changes.csv"
+                files_filepath = csv_dir / f"{repo_name}_commit_file_changes.csv"
                 save_file_changes_to_csv(extractor, pull_requests, files_filepath)
                 results["output_files"].append(f"Files CSV: {files_filepath}")
             
             # 4. Comments CSV
             if include_comments:
-                comments_filepath = csv_dir / f"{repo_name}_comments.csv"
+                comments_filepath = csv_dir / f"{repo_name}_review-comments.csv"
                 save_comments_to_csv(extractor, pull_requests, comments_filepath)
                 results["output_files"].append(f"Comments CSV: {comments_filepath}")
 
