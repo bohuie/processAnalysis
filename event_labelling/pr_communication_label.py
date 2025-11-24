@@ -29,7 +29,7 @@ MODEL_NAME = OLLAMA_MODEL_NAME
 RUN_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../"))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 DATA_FOLDER = os.path.join(PROJECT_ROOT, "data", "csve")
 os.makedirs(DATA_FOLDER, exist_ok=True)
 CACHE_PATH = os.path.join(DATA_FOLDER, "commit_message_cache.csv")

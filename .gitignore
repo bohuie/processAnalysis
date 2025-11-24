@@ -1,3 +1,8 @@
+# Ignore Python cache files in src/
+src/**/__pycache__/
+src/**/*.py[cod]
+src/**/*$py.class
+
 # Python
 __pycache__/
 *.py[cod]

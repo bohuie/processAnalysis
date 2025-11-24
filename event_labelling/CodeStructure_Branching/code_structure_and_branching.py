@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import pandas as pd
 import numpy as np
@@ -17,25 +18,10 @@ MODEL_NAME = "llama3.2:3b"
 RUN_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
 ANONYMIZE = True
 
-# === TIMESTAMP NORMALIZATION ==========================================
-def normalize_timestamp_to_utc_z(timestamp_str):
-    """Convert any timestamp format to UTC with Z suffix."""
-    if pd.isna(timestamp_str) or timestamp_str == '' or timestamp_str is None:
-        return None
-    try:
-        dt = date_parser.parse(str(timestamp_str))
-        if dt.tzinfo is not None:
-            dt = dt.astimezone(timezone.utc)
-        else:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.strftime('%Y-%m-%dT%H:%M:%SZ')
-    except:
-        return timestamp_str
-
 # === FILE ENRICHMENT AND CLEANING =====================================
 def clean_review_comments(team_folder):
     """Clean review-comments.csv files by extracting usernames from dict format."""
-    review_comment_files = sorted(team_folder.glob("*_review-comments.csv"))
+    review_comment_files = [f for f in team_folder.glob("*.csv") if f.name.endswith("_review-comments.csv")]
     if not review_comment_files:
         print(f"[WARN] No review-comments.csv found in {team_folder}")
         return
@@ -96,9 +82,9 @@ def enrich_prs_and_comments(team_folder):
     print(f"{'='*70}")
 
     all_csvs = list(team_folder.glob("*.csv"))
-    commits_path = next((f for f in all_csvs if re.search(r"_PR_commits\.csv$", f.name, re.IGNORECASE)), None)
-    prs_path = next((f for f in all_csvs if re.search(r"_all_pull_requests\.csv$", f.name, re.IGNORECASE)), None)
-    review_comments_path = next((f for f in all_csvs if re.search(r"_review-comments\.csv$", f.name, re.IGNORECASE)), None)
+    commits_path = next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
+    prs_path = next((f for f in all_csvs if f.name.endswith("_all_pull_requests.csv")), None)
+    review_comments_path = next((f for f in all_csvs if f.name.endswith("_review-comments.csv")), None)
 
     if not all([commits_path, prs_path, review_comments_path]):
         print(f"[WARN] Missing one or more required files for {team_name}, skipping enrichment.")
@@ -150,6 +136,15 @@ def enrich_prs_and_comments(team_folder):
         docs_updated = any("docs" in str(fp).lower() or "readme" in str(fp).lower() for fp in file_sums.index)
         return pd.Series({"top_file": top_file, "top_file_change_%": top_file_change_pct, "docs_updated": docs_updated})
 
+    # --- FIX START: Handle MergeError on rerun ---
+    # Drop existing enrichment columns before merge to avoid conflicts if the script is re-run
+    enrichment_cols = ["top_file", "top_file_change_%", "docs_updated"]
+    for col in enrichment_cols:
+        if col in prs_df.columns:
+            print(f"[INFO] Dropping existing enrichment column: {col}")
+            prs_df = prs_df.drop(columns=[col])
+    # --- FIX END ---
+
     print("[INFO] Calculating top file metrics per PR...")
     top_file_info = commits_df.groupby("pr_id", group_keys=False).apply(get_top_file_info).reset_index()
     enriched_prs = prs_df.merge(top_file_info, on="pr_id", how="left")
@@ -173,64 +168,6 @@ def enrich_prs_and_comments(team_folder):
     print(f"[SUCCESS] Updated PRs saved to: {prs_path}")
     print(f"[SUCCESS] Updated review comments saved to: {review_comments_path}")
     print(f"[INFO] Final PR count: {len(enriched_prs)} | Final comments count: {len(review_comments_df)}")
-
-# === BRANCH NAME CLEANING =============================================
-def clean_and_impute_branch_names(input_path, output_path):
-    """
-    Reads a CSV, imputes missing branch_name values based on the same pr_id,
-    and saves the cleaned data to a new CSV.
-    """
-    output_dir = os.path.dirname(output_path)
-    if not os.path.exists(output_dir):
-        print(f"Creating output directory: {output_dir}")
-        os.makedirs(output_dir)
-
-    if not os.path.exists(input_path):
-        print(f"Error: Input file not found at {input_path}. Skipping.")
-        return
-
-    print(f"Loading data from {input_path}...")
-    
-    try:
-        df = pd.read_csv(input_path)
-    except pd.errors.EmptyDataError:
-        print(f"Warning: File {input_path} is empty. Skipping.")
-        return
-    except Exception as e:
-        print(f"An error occurred reading {input_path}: {e}")
-        return
-
-    if 'pr_id' not in df.columns:
-        print("Error: 'pr_id' column not found. Cannot proceed with imputation.")
-        return
-    if 'branch_name' not in df.columns:
-        print("Error: 'branch_name' column not found. Cannot proceed with imputation.")
-        return
-
-    try:
-        df['pr_id'] = pd.to_numeric(df['pr_id'], errors='coerce').astype(pd.Int64Dtype())
-    except Exception as e:
-        print(f"Warning: Could not convert 'pr_id' to integer. Proceeding with original type. Error: {e}")
-        
-    df['branch_name'] = df['branch_name'].replace('', np.nan)
-    initial_missing = df['branch_name'].isna().sum()
-
-    print(f"Found {initial_missing} records with missing branch_name initially.")
-
-    valid_branches = df.dropna(subset=['branch_name', 'pr_id'])
-    branch_map = valid_branches.drop_duplicates(subset=['pr_id'], keep='first').set_index('pr_id')['branch_name']
-    df['branch_name'].fillna(df['pr_id'].map(branch_map), inplace=True)
-
-    filled_count = initial_missing - df['branch_name'].isna().sum()
-
-    try:
-        df.to_csv(output_path, index=False)
-        print("-" * 50)
-        print(f"Cleaning complete for {input_path}.")
-        print(f"-> Successfully imputed {filled_count} missing branch names based on matching pr_id.")
-        print(f"-> The cleaned data is saved to: {output_path}")
-    except Exception as e:
-        print(f"An error occurred writing to {output_path}: {e}")
 
 # === TIMESTAMP FIX FUNCTION ===========================================
 def adjust_merge_timestamps(combined_df):
@@ -317,7 +254,8 @@ def get_branch_pr_mapping(prs_df):
 # === ANONYMIZATION ====================================================
 def load_anonymization_mapping():
     """Load anonymization mapping from JSON file."""
-    mapping_path = "../../confidential/anonymized_usernames.json"
+    # FIXED PATH: Changed to '../confidential/...' to look in sibling directory
+    mapping_path = "../confidential/anonymized_usernames.json"
     if os.path.exists(mapping_path):
         try:
             with open(mapping_path, 'r') as f:
@@ -751,7 +689,8 @@ def diagnose_timestamp_issues(df):
 # === MAIN PROCESSING ==================================================
 def process_all_teams():
     """Main function to process all teams."""
-    base_path = Path("../../data/csv/")
+    # FIXED PATH: Changed '../data/csv/' to 'data/csv/' 
+    base_path = Path("data/csv/") 
     
     if not base_path.exists():
         print(f"Base path '{base_path}' not found!")
@@ -792,46 +731,27 @@ def process_all_teams():
     for team_folder in sorted(team_folders):
         team_name = team_folder.name
         print(f"\n{'='*60}")
-        print(f"Processing {team_name}...")
-        print('='*60)
-
-        prs_path = None
-        for pattern in [
-            f"{team_name}_all_pull_requests_fixed.csv",
-            f"{team_name}_all_pull_requests.csv",
-            f"{team_name}_PRs.csv",
-            f"{team_name}_pull_requests.csv",
-            "all_pull_requests.csv"
-        ]:
-            potential_path = team_folder / pattern
-            if potential_path.exists():
-                prs_path = potential_path
-                break
-
-        if not prs_path:
-            print(f"Missing PRs CSV for {team_name}, skipping.")
-            continue
-
-        commits_path = None
-        for pattern in [
-            f"{team_name}_commit_file_changes.csv",
-            f"{team_name}_PR_commits_fixed.csv",
-            f"{team_name}_commits.csv",
-            "PR_commits.csv"
-        ]:
-            potential_path = team_folder / pattern
-            if potential_path.exists():
-                commits_path = potential_path
-                print(f"Found commits file: {potential_path.name}")
-                if "file_changes" in pattern:
-                    print(f"   Using file-level commit data (best for granular analysis)")
-                else:
-                    print(f"   Using commit-level data (limited file-level detail)")
-                break
-
-        print(f"Loading PRs from: {prs_path.name}")
-        prs_df = pd.read_csv(prs_path)
+        print(f"[INFO] Starting label generation for {team_name}")
+        print(f"{'='*60}")
         
+        # Define paths for the team's data
+        team_folder_path = team_folder
+        prs_path = next((f for f in team_folder_path.glob("*.csv") if f.name.endswith("_all_pull_requests.csv")), None)
+        commits_path = next((f for f in team_folder_path.glob("*.csv") if f.name.endswith("_PR_commits.csv")), None)
+        commit_file_changes_path = next((f for f in team_folder_path.glob("*.csv") if f.name.endswith("_commit_file_changes.csv")), None)
+        
+        if not all([prs_path, commits_path, commit_file_changes_path]):
+            print(f"[WARN] Missing one or more required files for label generation for {team_name}. Skipping.")
+            continue
+            
+        print("[INFO] Loading PRs, Commits, and Commit File Changes...")
+        prs_df = pd.read_csv(prs_path)
+        commits_df = pd.read_csv(commits_path)
+        commit_file_changes_df = pd.read_csv(commit_file_changes_path)
+        
+        # --- Pre-processing for all labelers ---
+        # 1. Bot Removal
+        print("[INFO] Filtering bot PRs and commits...")
         bot_patterns_regex = [
             r'\[bot\]$',
             r'^bot[-_]',
@@ -845,228 +765,150 @@ def process_all_teams():
             r'snyk-bot',
             r'github-classroom',
         ]
-
-        original_count = len(prs_df)
+        
+        # Filter bot PRs
+        original_pr_count = len(prs_df)
         if 'pr_author' in prs_df.columns:
             prs_df = prs_df[~prs_df['pr_author'].str.lower().str.contains(
                 '|'.join(bot_patterns_regex), 
                 na=False, 
                 regex=True
             )]
-            bots_filtered = original_count - len(prs_df)
+            bots_filtered = original_pr_count - len(prs_df)
             if bots_filtered > 0:
                 print(f"[INFO] Filtered out {bots_filtered} bot PRs")
         
-        if "created_at" in prs_df.columns:
-            prs_df["created_at"] = prs_df["created_at"].apply(normalize_timestamp_to_utc_z)
-        if "merged_at" in prs_df.columns:
-            prs_df["merged_at"] = prs_df["merged_at"].apply(normalize_timestamp_to_utc_z)
-            
-        prs_df["created_at"] = pd.to_datetime(prs_df["created_at"], utc=True, errors="coerce")
-        prs_df["merged_at"] = pd.to_datetime(prs_df["merged_at"], utc=True, errors="coerce")
-
-        original_pr_count = len(prs_df)
-        prs_df = prs_df.dropna(subset=["created_at"])
-        if len(prs_df) < original_pr_count:
-             print(f"[WARN] Dropped {original_pr_count - len(prs_df)} PRs due to missing/invalid 'created_at' timestamp.")
-
+        # Filter bot commits
+        original_commit_count = len(commits_df)
+        if 'author' in commits_df.columns:
+            commits_df = commits_df[~commits_df['author'].str.lower().str.contains(
+                '|'.join(bot_patterns_regex), 
+                na=False, 
+                regex=True
+            )]
+            bots_filtered = original_commit_count - len(commits_df)
+            if bots_filtered > 0:
+                print(f"[INFO] Filtered out {bots_filtered} bot commits")
+        
+        # Filter bot commits from file changes too
+        original_file_changes_count = len(commit_file_changes_df)
+        if 'author' in commit_file_changes_df.columns:
+            commit_file_changes_df = commit_file_changes_df[~commit_file_changes_df['author'].str.lower().str.contains(
+                '|'.join(bot_patterns_regex), 
+                na=False, 
+                regex=True
+            )]
+            bots_filtered = original_file_changes_count - len(commit_file_changes_df)
+            if bots_filtered > 0:
+                print(f"[INFO] Filtered out {bots_filtered} bot file changes")
+        
+        print(f"[INFO] After filtering - PRs: {len(prs_df)}, Commits: {len(commits_df)}, File Changes: {len(commit_file_changes_df)}")
+        
+        # 3. Anonymization (if enabled)
+        if ANONYMIZE and name_map:
+            print("[INFO] Applying anonymization...")
+            for col in ["pr_author", "merged_by", "head_branch"]:
+                if col in prs_df.columns:
+                    if col == "head_branch":
+                        prs_df[col] = anonymize_branch_names(prs_df[col], name_map)
+                    else:
+                        prs_df[col] = anonymize_column(prs_df[col], name_map)
+        
+        # 4. Create timestamp lookup for PR creation times
         pr_created_at_lookup = {}
         for _, row in prs_df.iterrows():
             pr_id = row.get("pr_id")
             created_at = row.get("created_at")
             if pd.notna(pr_id) and pd.notna(created_at):
                 pr_created_at_lookup[pr_id] = created_at
-        
         print(f"[INFO] Created timestamp lookup for {len(pr_created_at_lookup)} PRs")
 
-        if "pr_author" not in prs_df.columns:
-            if "author" in prs_df.columns:
-                prs_df["pr_author"] = prs_df["author"]
-            else:
-                prs_df["pr_author"] = "unknown"
-
-        unique_branches = get_unique_branch_names(prs_df)
-        branch_mapping = get_branch_pr_mapping(prs_df)
-        print(f"[INFO] Processing {len(unique_branches)} unique branch names across {len(prs_df)} PRs")
-
-        if ANONYMIZE:
-            if name_map:
-                print(f"Anonymizing PR authors...")
-                prs_df["pr_author"] = anonymize_column(prs_df["pr_author"], name_map)
-                
-                if "head_branch" in prs_df.columns:
-                    print(f"Anonymizing branch names...")
-                    prs_df["head_branch"] = anonymize_branch_names(prs_df["head_branch"], name_map)
-            else:
-                print(f"Anonymization enabled but no mapping loaded - skipping anonymization")
-
-        commits_df = None
-        if commits_path:
-            print(f"Loading commits from: {commits_path.name}")
-            commits_df = pd.read_csv(commits_path)
+        # 5. Prepare commits data with branch names (if available)
+        # Check if branch_name exists in commits, if not, skip the merge
+        if 'branch_name' in commits_df.columns:
+            print("[INFO] Branch names found in commits data")
+            commits_with_branch_df = commits_df[['pr_id', 'commit_sha', 'branch_name']].drop_duplicates(subset=['commit_sha'])
             
-            original_count = len(commits_df)
-            if 'author' in commits_df.columns:
-                commits_df = commits_df[~commits_df['author'].str.lower().str.contains(
-                    '|'.join(bot_patterns_regex), 
-                    na=False, 
-                    regex=True
-                )]
-                bots_filtered = original_count - len(commits_df)
-                if bots_filtered > 0:
-                    print(f"[INFO] Filtered out {bots_filtered} bot commits")
-            
-            commits_df["commit_date"] = pd.to_datetime(commits_df.get("commit_date"), errors="coerce")
-
-            if ANONYMIZE and "author" in commits_df.columns and name_map:
-                print(f"Anonymizing commit authors...")
-                commits_df["author"] = anonymize_column(commits_df["author"], name_map)
-        else:
-            print(f"Warning: No commits CSV found for {team_name}")
-
-        all_labels = []
-        llm_reasoning_data = []
-
-        print("\nGenerating Code Structure / Branching Labels...")
-        
-        print("  - Features per branch (one, multiple)...")
-        try:
-            features_per_branch_labels = label_features_per_branch(prs_df.copy())
-            if not features_per_branch_labels.empty:
-                all_labels.append(features_per_branch_labels)
-                print(f"    Generated {len(features_per_branch_labels)} events")
-        except Exception as e:
-            print(f"    Error: {e}")
-
-        print("  - Branch names (meaningful, random)...")
-        try:
-            branch_name_labels, branch_name_reasoning = label_branch_names(prs_df.copy())
-            if not branch_name_labels.empty:
-                all_labels.append(branch_name_labels)
-                print(f"    Generated {len(branch_name_labels)} events")
-            if not branch_name_reasoning.empty:
-                llm_reasoning_data.append(branch_name_reasoning)
-        except Exception as e:
-            print(f"    Error: {e}")
-
-        if commits_df is not None:
-            print("  - Feature size (small, large)...")
-            try:
-                feature_size_labels = label_feature_size(commits_df.copy(), prs_df.copy(), pr_created_at_lookup)
-                if not feature_size_labels.empty:
-                    all_labels.append(feature_size_labels)
-                    print(f"    Generated {len(feature_size_labels)} events")
-            except Exception as e:
-                print(f"    Error: {e}")
-
-            print("  - Refactor size (small, large)...")
-            try:
-                refactor_size_labels = label_refactor_size(commits_df.copy(), prs_df.copy(), pr_created_at_lookup)
-                if not refactor_size_labels.empty:
-                    all_labels.append(refactor_size_labels)
-                    print(f"    Generated {len(refactor_size_labels)} events")
-            except Exception as e:
-                print(f"    Error: {e}")
-
-        print("  - Repository status (up-to-date, outdated)...")
-        try:
-            repo_status_labels = label_repo_status(prs_df.copy())
-            if not repo_status_labels.empty:
-                all_labels.append(repo_status_labels)
-                print(f"    Generated {len(repo_status_labels)} events")
-        except Exception as e:
-            print(f"    Error: {e}")
-
-        print("  - PR status (closed, still_open)...")
-        try:
-            pr_status_labels = label_pr_status(prs_df.copy())
-            if not pr_status_labels.empty:
-                all_labels.append(pr_status_labels)
-                print(f"    Generated {len(pr_status_labels)} events")
-        except Exception as e:
-            print(f"    Error: {e}")
-
-        print("  - Merge state (no_merge, self-merge, reviewed_merge)...")
-        try:
-            merge_state_labels = label_merge_state(prs_df.copy())
-            if not merge_state_labels.empty:
-                all_labels.append(merge_state_labels)
-                print(f"    Generated {len(merge_state_labels)} events")
-        except Exception as e:
-            print(f"    Error: {e}")
-
-        if not all_labels:
-            print(f"No labels generated for {team_name}, continuing to next team.")
-            continue
-
-        combined = pd.concat(all_labels, ignore_index=True, sort=False)
-        combined["created_at"] = pd.to_datetime(combined["created_at"], utc=True, errors="coerce")
-
-        combined = adjust_merge_timestamps(combined)
-        
-        diagnose_timestamp_issues(combined)
-        
-        if "created_at" in combined.columns:
-            combined["created_at"] = combined["created_at"].apply(
-                lambda x: x.strftime('%Y-%m-%dT%H:%M:%SZ') if pd.notna(x) else ''
-            )
-
-        suffix = "_anonymized" if ANONYMIZE and name_map else ""
-        
-        out_path = base_path / f"code_structure_branching_labels_{team_name}{suffix}.csv"
-        
-        try:
-            combined.to_csv(out_path, index=False)
-            print(f"\nSaved combined event labels to: {out_path}")
-            
-            if ANONYMIZE and name_map:
-                print(f"Anonymized authors in output:")
-                unique_authors = combined["pr_author"].unique()
-                for author in sorted(unique_authors):
-                    count = (combined["pr_author"] == author).sum()
-                    print(f"   {author}: {count} events")
-        except Exception as e:
-            print(f"Failed to save labels to {out_path}: {e}")
-        
-        if llm_reasoning_data:
-            graphs_folder = team_folder / "graphs"
-            reasoning_folder = graphs_folder / "reasoning"
-            reasoning_folder.mkdir(parents=True, exist_ok=True)
-            
-            combined_llm = pd.concat(llm_reasoning_data, ignore_index=True, sort=False)
-            combined_llm["created_at"] = pd.to_datetime(combined_llm["created_at"], utc=True, errors="coerce")
-            
-            if "created_at" in combined_llm.columns:
-                combined_llm["created_at"] = combined_llm["created_at"].apply(
-                    lambda x: x.strftime('%Y-%m-%dT%H:%M:%SZ') if pd.notna(x) else ''
+            # Merge branch name into commit_file_changes if it doesn't already have it
+            if 'branch_name' not in commit_file_changes_df.columns:
+                commit_file_changes_df = commit_file_changes_df.merge(
+                    commits_with_branch_df,
+                    on=['pr_id', 'commit_sha'], 
+                    how='left'
                 )
-            
-            llm_out_path = reasoning_folder / f"{team_name}_all_llm_reasoning{suffix}.csv"
-            
-            try:
-                combined_llm.to_csv(llm_out_path, index=False)
-                print(f"Saved LLM reasoning data to: {llm_out_path}")
-            except Exception as e:
-                print(f"Failed to save LLM reasoning to {llm_out_path}: {e}")
+        else:
+            print("[INFO] No branch_name column in commits data - will work without it")
+            # Branch name not needed for the core labeling functions
         
-        # Clean branch names after labeling
-        print("\nCleaning branch names...")
-        clean_folder = base_path / "clean"
-        clean_folder.mkdir(exist_ok=True)
-        clean_output_path = clean_folder / f"code_structure_branching_labels_{team_name}{suffix}.csv"
-        clean_and_impute_branch_names(str(out_path), str(clean_output_path))
+        # --- Initialize List of all Labels ---
+        all_labels_dfs = []
+        
+        # --- LABELING ---
+        
+        # 1. Branch Naming Labels (Meaningful/Random)
+        branch_name_labels_df, llm_reasoning_df = label_branch_names(prs_df)
+        all_labels_dfs.append(branch_name_labels_df)
 
-    print("\n" + "="*60)
-    print("ALL TEAMS PROCESSED")
-    print("="*60)
-    if ANONYMIZE and name_map:
-        print("Anonymization was ENABLED for all outputs")
-    elif ANONYMIZE and not name_map:
-        print("Anonymization was ENABLED but no mapping was loaded")
-    else:
-        print("Anonymization was DISABLED")
-    print("="*60)
+        # 2. Features Per Branch (One/Multiple)
+        features_per_branch_df = label_features_per_branch(prs_df)
+        all_labels_dfs.append(features_per_branch_df)
 
-# === MAIN EXECUTION ===================================================
+        # 3. Feature Size (Small/Large) - Per Commit
+        feature_size_df = label_feature_size(commit_file_changes_df, prs_df, pr_created_at_lookup)
+        all_labels_dfs.append(feature_size_df)
+
+        # 4. Refactor Size (Small/Large) - Per File in Commit
+        refactor_size_df = label_refactor_size(commit_file_changes_df, prs_df, pr_created_at_lookup)
+        all_labels_dfs.append(refactor_size_df)
+        
+        # 5. Repository Status (up-to-date/outdated)
+        repo_status_df = label_repo_status(prs_df)
+        all_labels_dfs.append(repo_status_df)
+        
+        # 6. PR Status (closed/still_open/merged)
+        pr_status_df = label_pr_status(prs_df)
+        all_labels_dfs.append(pr_status_df)
+        
+        # 7. Merge State (no_merge/self_merge/reviewed_merge)
+        merge_state_df = label_merge_state(prs_df)
+        all_labels_dfs.append(merge_state_df)
+
+        # --- COMBINE AND SAVE ---
+        if not all_labels_dfs:
+            print(f"[WARN] No labels generated for {team_name}.")
+            continue
+            
+        combined_df = pd.concat(all_labels_dfs, ignore_index=True)
+
+        # Adjust merge timestamps to ensure they are chronologically after the last commit
+        combined_df = adjust_merge_timestamps(combined_df)
+        
+        # Normalize and sort final output
+        combined_df["created_at"] = combined_df["created_at"].apply(normalize_timestamp_to_utc_z)
+        combined_df = combined_df.sort_values(by=["pr_id", "created_at"]).reset_index(drop=True)
+        
+        diagnose_timestamp_issues(combined_df)
+
+        # Define output paths
+        output_dir = Path("data/graph_labels")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        output_file = output_dir / f"{team_name}_labels_branching_and_structure.csv"
+        reasoning_file = output_dir / f"{team_name}_llm_branch_name_reasoning.csv"
+
+        # Save final files
+        combined_df.to_csv(output_file, index=False)
+        llm_reasoning_df.to_csv(reasoning_file, index=False)
+
+        print("-" * 60)
+        print(f"[SUCCESS] Final labels saved to: {output_file}")
+        print(f"[SUCCESS] LLM reasoning saved to: {reasoning_file}")
+        print(f"[INFO] Total events generated: {len(combined_df)}")
+        print("=" * 60)
+        
+    print("\n" + "="*70)
+    print("[COMPLETE] All label generation finished successfully!")
+    print("="*70)
+
 if __name__ == "__main__":
     process_all_teams()
