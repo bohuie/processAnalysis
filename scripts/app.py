@@ -76,101 +76,148 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
 
 
 def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
-    """Extract and save all commits from PRs to CSV."""
+    """Extract and save commit-level + file-level rows to CSV, matching old extractor logic."""
+
     if not pull_requests:
         print("[WARN] No pull requests to extract commits from")
         return
-    
-    print(f"[INFO] Extracting commits from {len(pull_requests)} PRs...")
-    
+
+    print(f"[INFO] Extracting commits (with file stats) from {len(pull_requests)} PRs...")
+
     fieldnames = [
-        'pr_id', 'pr_author', 'commit_sha', 'author', 'commit_date',
-        'commit_message', 'lines_added', 'lines_deleted', 'files_changed'
+        'pr_id',
+        'commit_sha',
+        'commit_message',
+        'commit_date',
+        'file_path',
+        'lines_added',
+        'lines_deleted',
+        'author',
+        'pr_author'
     ]
-    
-    all_commits = []
-    
+
+    all_rows = []
+
     for pr in pull_requests:
         pr_id = pr.get('number')
         pr_author = pr.get('user', {}).get('login') if pr.get('user') else 'Unknown'
-        
+
         print(f"[DEBUG] Extracting commits for PR #{pr_id}")
         commits = extractor.extract_commits_from_pr(pr_id)
-        
+
         for commit in commits:
-            commit_data = commit.get('commit', {})
-            author_data = commit_data.get('author', {})
-            
-            all_commits.append({
-                'pr_id': pr_id,
-                'pr_author': pr_author,
-                'commit_sha': commit.get('sha'),
-                'author': author_data.get('name', 'Unknown'),
-                'commit_date': author_data.get('date'),
-                'commit_message': commit_data.get('message', '').split('\n')[0],
-                'lines_added': None,  # Available in commit details
-                'lines_deleted': None,  # Available in commit details
-                'files_changed': None,  # Available in commit details
-            })
-    
+            commit_sha = commit.get("sha")
+            commit_data = commit.get("commit", {})
+            author_data = commit_data.get("author", {})
+
+            commit_message = commit_data.get("message", "").split("\n")[0]
+            commit_date = author_data.get("date")
+            commit_author_name = author_data.get("name", "Unknown")
+
+            # --- NEW: get file diffs exactly like old extractor ---
+            commit_details = extractor.extract_commit_details(commit_sha)
+            files = commit_details.get("files", [])
+
+            # If no file changes, still output ONE row for the commit
+            if not files:
+                all_rows.append({
+                    "pr_id": pr_id,
+                    "commit_sha": commit_sha,
+                    "commit_message": commit_message,
+                    "commit_date": commit_date,
+                    "file_path": None,
+                    "lines_added": None,
+                    "lines_deleted": None,
+                    "author": commit_author_name,
+                    "pr_author": pr_author
+                })
+                continue
+
+            # One row per file
+            for f in files:
+                all_rows.append({
+                    "pr_id": pr_id,
+                    "commit_sha": commit_sha,
+                    "commit_message": commit_message,
+                    "commit_date": commit_date,
+                    "file_path": f.get("filename"),
+                    "lines_added": f.get("additions"),
+                    "lines_deleted": f.get("deletions"),
+                    "author": commit_author_name,
+                    "pr_author": pr_author
+                })
+
+    # Write to CSV
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(all_commits)
-    
-    print(f"[SUCCESS] Saved {len(all_commits)} commits to: {filepath}")
+        writer.writerows(all_rows)
+
+    print(f"[SUCCESS] Saved {len(all_rows)} commit+file rows to: {filepath}")
+
 
 def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
     """Extract and save all file changes from PRs to CSV."""
     if not pull_requests:
         print("[WARN] No pull requests to extract file changes from")
         return
-    
+
     print(f"[INFO] Extracting file changes from {len(pull_requests)} PRs...")
-    
+
     fieldnames = [
-        'pr_id', 'pr_author', 'commit_sha', 'filename', 'status', 'lines_added', 
-        'lines_deleted', 'changes', 'patch_snippet'
+        'pr_id',
+        'pr_author',
+        'commit_sha',
+        'author',            # ⭐ NEW — commit author
+        'filename',
+        'status',
+        'lines_added',
+        'lines_deleted',
+        'changes',
+        'patch_snippet'
     ]
-    
+
     all_files = []
-    
+
     for pr in pull_requests:
         pr_id = pr.get('number')
         pr_author = pr.get('user', {}).get('login') if pr.get('user') else 'Unknown'
-        
+
         print(f"[DEBUG] Extracting commits and file changes for PR #{pr_id}")
-        
+
         # Get all commits for this PR
         commits = extractor.extract_commits_from_pr(pr_id)
-        
-        # For each commit, get the file changes
+
         for commit in commits:
             commit_sha = commit.get('sha')
-            
-            # Get detailed commit info with files
+
             commit_details = extractor.extract_commit_details(commit_sha)
+            commit_info = commit_details.get("commit", {})
+            commit_author = commit_info.get("author", {}).get("name", "Unknown")
+
             files = commit_details.get('files', [])
-            
+
             for file in files:
                 all_files.append({
                     'pr_id': pr_id,
                     'pr_author': pr_author,
                     'commit_sha': commit_sha,
+                    'author': commit_author,                      
                     'filename': file.get('filename'),
                     'status': file.get('status'),
-                    'lines_added': file.get('lines_added'),
-                    'lines_deleted': file.get('lines_deleted'),
+                    'lines_added': file.get('additions'),         
+                    'lines_deleted': file.get('deletions'),       
                     'changes': file.get('changes'),
-                    'patch_snippet': (file.get('patch', '') or ''),
+                    'patch_snippet': (file.get('patch', '') or '')
                 })
-    
+
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(all_files)
-    
+
     print(f"[SUCCESS] Saved {len(all_files)} file changes to: {filepath}")
+
 
 def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
     """Extract and save all comments from PRs to CSV."""
