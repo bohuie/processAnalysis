@@ -856,7 +856,7 @@ if __name__ == "__main__":
     files = extractor.extract_pr_file_changes(100)
     print(f"    Found {len(files)} changed files")
     if files:
-        print(f"    First file: {files[0]['filename']} (+{files[0]['lines_added']}/-{files[0]['lines_deleted']})")
+        print(f"    First file: {files[0]['filename']} (+{files[0]['additions']}/-{files[0]['deletions']})")
     
     # Example 4: Extract all comments
     print("\n[4] Extracting all comments...")
