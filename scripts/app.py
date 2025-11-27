@@ -33,11 +33,21 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
     print(f"[INFO] Saving {len(pull_requests)} PRs to CSV: {filepath}")
     
     fieldnames = [
-        'pr_id', 'pr_title', 'state', 'pr_author', 'created_at', 'updated_at',
-        'closed_at', 'merged_at', 'merged_by', 'head_branch', 'base_branch',
-        'commits', 'line_added', 'line_deleted', 'files_changed',
-        'comments', 'review_comments', 'mergeable_state', 'pr_description'
+        'pr_id',
+        'created_at',
+        'merged_at',
+        'pr_author',
+        'pr_title',
+        'pr_description',
+        'merged_by',
+        'state',
+        'head_branch',
+        'was_up_to_date_at_merge',
+        'has_conflicts',
+        'docs_updated',
+        'num_reviewers'
     ]
+
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
@@ -46,25 +56,20 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
         for pr in pull_requests:
             row = {
                 'pr_id': pr.get('number'),
-                'pr_title': pr.get('pr_title', ''),
-                'state': pr.get('state'),
-                'pr_author': pr.get('user', {}).get('login') if pr.get('user') else None,
                 'created_at': pr.get('created_at'),
-                'updated_at': pr.get('updated_at'),
-                'closed_at': pr.get('closed_at'),
                 'merged_at': pr.get('merged_at'),
-                'merged_by': pr.get('merged_by', {}).get('login') if pr.get('merged_by') else None,
+                'pr_author': pr.get('user', {}).get('login') if pr.get('user') else None,
+                'pr_title': pr.get('pr_title'),
+                'pr_description': (pr.get('pr_description') or ''),
+                'merged_by': pr.get('merged_by'),
+                'state': pr.get('state'),
                 'head_branch': pr.get('head', {}).get('ref') if pr.get('head') else None,
-                'base_branch': pr.get('base', {}).get('ref') if pr.get('base') else None,
-                'commits': pr.get('commits'),
-                'line_added': pr.get('line_added'),
-                'line_deleted': pr.get('line_deleted'),
-                'files_changed': pr.get('files_changed'),
-                'comments': pr.get('comments'),
-                'review_comments': pr.get('review_comments'),
-                'mergeable_state': pr.get('mergeable_state'),
-                'pr_description': (pr.get('pr_description', '') or '')
+                'was_up_to_date_at_merge': pr.get('was_up_to_date_at_merge'),
+                'has_conflicts': pr.get('has_conflicts'),
+                'docs_updated': pr.get('docs_updated'),
+                'num_reviewers': pr.get('num_reviewers'),
             }
+
             writer.writerow(row)
     
     print(f"[SUCCESS] CSV saved: {filepath}")
@@ -289,37 +294,94 @@ def extract_repository_data(
         print("[INFO] Fetching pull requests...")
         pull_requests = extractor.extract_all_pull_requests(state="all")
         
+        # ===================== ENRICH PR DATA =====================
+        print("[INFO] Enriching PR data...")
+
+        enriched_prs = []
+
+        for pr in pull_requests:
+            pr_id = pr["number"]
+
+            # 1. Fetch full PR details
+            full = extractor.extract_pull_request_by_id(pr_id)
+            if not full:
+                enriched_prs.append(pr)
+                continue
+
+            # Add merged_by in a normalized format
+            merged_by = full.get("merged_by")
+            pr["merged_by"] = merged_by.get("login") if merged_by else None
+
+            # Add mergeable_state
+            pr["mergeable_state"] = full.get("mergeable_state")
+
+            # 2. Determine conflicts
+            pr["has_conflicts"] = (full.get("mergeable_state") == "dirty")
+
+            # 3. Compute was_up_to_date_at_merge
+            if full.get("merged_at"):
+                base_sha = full["base"]["sha"]
+                head_sha = full["head"]["sha"]
+
+                comp = extractor.compare_commits(base_sha, head_sha)
+                behind = comp.get("behind_by", None)
+                pr["was_up_to_date_at_merge"] = (behind == 0)
+            else:
+                pr["was_up_to_date_at_merge"] = None
+
+            # 4. Compute num_reviewers
+            reviews = extractor.extract_pr_reviews(pr_id)
+            reviewers = {r.get("user", {}).get("login") for r in reviews if r.get("user")}
+            pr["num_reviewers"] = len(reviewers)
+
+            # 5. docs_updated using file changes
+            files = extractor.extract_pr_file_changes(pr_id)
+            docs_updated = any(
+                any(k in f.get("filename", "").lower() for k in ["readme", "doc", "docs"])
+                for f in files
+            )
+            pr["docs_updated"] = docs_updated
+
+            # 6. Title / description normalization
+            pr["pr_title"] = full.get("title")
+            pr["pr_description"] = full.get("body")
+
+            enriched_prs.append(pr)
+
+        pull_requests = enriched_prs
+
+        
         results["pull_requests_extracted"] = len(pull_requests)
         print(f"[INFO] Extracted {len(pull_requests)} pull requests")
 
         # Save to JSON
         if save_json:
-            json_filepath = json_dir / f"{repo_name}_pull_requests.json"
+            json_filepath = json_dir / f"{repo_name}_all_pull_requests.json"
             save_prs_to_json(pull_requests, json_filepath)
             results["output_files"].append(f"PRs JSON: {json_filepath}")
 
         # Save to CSV
         if save_csv:
             # 1. Pull Requests CSV
-            csv_filepath = csv_dir / f"{repo_name}_pull_requests.csv"
+            csv_filepath = csv_dir / f"{repo_name}_all_pull_requests.csv"
             save_prs_to_csv(pull_requests, csv_filepath)
             results["output_files"].append(f"PRs CSV: {csv_filepath}")
             
             # 2. Commits CSV
             if include_commits:
-                commits_filepath = csv_dir / f"{repo_name}_commits.csv"
+                commits_filepath = csv_dir / f"{repo_name}_PR_commits.csv"
                 save_commits_to_csv(extractor, pull_requests, commits_filepath)
                 results["output_files"].append(f"Commits CSV: {commits_filepath}")
             
             # 3. File Changes CSV
             if include_files:
-                files_filepath = csv_dir / f"{repo_name}_file_changes.csv"
+                files_filepath = csv_dir / f"{repo_name}_commit_file_changes.csv"
                 save_file_changes_to_csv(extractor, pull_requests, files_filepath)
                 results["output_files"].append(f"Files CSV: {files_filepath}")
             
             # 4. Comments CSV
             if include_comments:
-                comments_filepath = csv_dir / f"{repo_name}_comments.csv"
+                comments_filepath = csv_dir / f"{repo_name}_review-comments.csv"
                 save_comments_to_csv(extractor, pull_requests, comments_filepath)
                 results["output_files"].append(f"Comments CSV: {comments_filepath}")
 

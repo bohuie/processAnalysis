@@ -275,7 +275,14 @@ class PullRequestExtractor(GitExtractor):
         if not response:
             return None
         
-        return response.json()
+        data = response.json()
+        if data.get("merged_by"):
+            data["merged_by_login"] = data["merged_by"].get("login")
+        else:
+            data["merged_by_login"] = None
+
+        return data
+
 
     def extract_all_pull_requests(
         self,
