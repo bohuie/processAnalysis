@@ -246,7 +246,7 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
             all_comments.append({
                 'pr_id': pr_id,
                 'pr_author': pr_author,
-                'comment_type': 'review',
+                'comment_type': 'inline',
                 'comment_id': comment.get('id'),
                 'author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
                 'comment_body': (comment.get('body', '') or ''),
@@ -254,17 +254,30 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 'updated_at': comment.get('updated_at'),
             })
         
-        # Issue comments (general PR comments)
+        # Issue comments (PR conversation tab comments)
         for comment in comments.get('issue_comments', []):
             all_comments.append({
                 'pr_id': pr_id,
                 'pr_author': pr_author,
-                'comment_type': 'issue',
+                'comment_type': 'conversation',
                 'comment_id': comment.get('id'),
                 'author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
                 'comment_body': (comment.get('body', '') or ''),
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
+            })
+            
+        # Review comments (main review comments from when reviewer clicks "Review Changes")
+        for comment in comments.get('pr_reviews', []):
+            all_comments.append({
+                'pr_id': pr_id,
+                'pr_author': pr_author,
+                'comment_type': 'review',
+                'comment_id': comment.get('id'),
+                'author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
+                'comment_body': (comment.get('body', '') or ''),
+                'created_at': comment.get('submitted_at'),
+                'updated_at': comment.get('submitted_at'),
             })
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -459,7 +472,7 @@ if __name__ == "__main__":
     # ==================== CONFIGURATION ====================
     
     REPO_OWNER = "COSC-499-W2023" 
-    REPO_NAME = "year-long-project-team-15"
+    REPO_NAME = "year-long-project-team-21"
     OUTPUT_DIR = "./data"
     SAVE_JSON = True
     SAVE_CSV = True

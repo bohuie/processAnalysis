@@ -16,3 +16,6 @@ __pycache__/
 
 # Data
 data/*/
+
+# Virtual Environment files
+venv/
