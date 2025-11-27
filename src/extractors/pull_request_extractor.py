@@ -833,7 +833,7 @@ if __name__ == "__main__":
     print("\n[1] Extracting single PR...")
     pr_data = extractor.extract_pull_request_by_id(100)
     if pr_data:
-        print(f"    PR #{pr_data['number']}: {pr_data['title']}")
+        print(f"    PR #{pr_data['number']}: {pr_data['pr_title']}")
         print(f"    State: {pr_data['state']}")
         print(f"    Author: {pr_data['user']['login']}")
     
@@ -849,7 +849,7 @@ if __name__ == "__main__":
     files = extractor.extract_pr_file_changes(100)
     print(f"    Found {len(files)} changed files")
     if files:
-        print(f"    First file: {files[0]['filename']} (+{files[0]['additions']}/-{files[0]['deletions']})")
+        print(f"    First file: {files[0]['filename']} (+{files[0]['lines_added']}/-{files[0]['lines_deleted']})")
     
     # Example 4: Extract all comments
     print("\n[4] Extracting all comments...")
@@ -865,7 +865,7 @@ if __name__ == "__main__":
     # Example 6: Extract complete PR
     print("\n[6] Extracting complete PR data...")
     complete_pr = extractor.extract_pr_complete(100)
-    print(f"    PR: {complete_pr['pr_data']['title'] if complete_pr['pr_data'] else 'N/A'}")
+    print(f"    PR: {complete_pr['pr_data']['pr_title'] if complete_pr['pr_data'] else 'N/A'}")
     print(f"    Commits: {len(complete_pr['commits'])}")
     print(f"    Files: {len(complete_pr['files'])}")
     print(f"    Review comments: {len(complete_pr['review_comments'])}")

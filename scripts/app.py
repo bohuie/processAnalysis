@@ -33,10 +33,10 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
     print(f"[INFO] Saving {len(pull_requests)} PRs to CSV: {filepath}")
     
     fieldnames = [
-        'pr_id', 'title', 'state', 'author', 'created_at', 'updated_at',
+        'pr_id', 'pr_title', 'state', 'pr_author', 'created_at', 'updated_at',
         'closed_at', 'merged_at', 'merged_by', 'head_branch', 'base_branch',
-        'commits', 'additions', 'deletions', 'changed_files',
-        'comments', 'review_comments', 'mergeable_state', 'body'
+        'commits', 'line_added', 'line_deleted', 'files_changed',
+        'comments', 'review_comments', 'mergeable_state', 'pr_description'
     ]
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -46,9 +46,9 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
         for pr in pull_requests:
             row = {
                 'pr_id': pr.get('number'),
-                'title': pr.get('title', ''),
+                'pr_title': pr.get('pr_title', ''),
                 'state': pr.get('state'),
-                'author': pr.get('user', {}).get('login') if pr.get('user') else None,
+                'pr_author': pr.get('user', {}).get('login') if pr.get('user') else None,
                 'created_at': pr.get('created_at'),
                 'updated_at': pr.get('updated_at'),
                 'closed_at': pr.get('closed_at'),
@@ -57,13 +57,13 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
                 'head_branch': pr.get('head', {}).get('ref') if pr.get('head') else None,
                 'base_branch': pr.get('base', {}).get('ref') if pr.get('base') else None,
                 'commits': pr.get('commits'),
-                'additions': pr.get('additions'),
-                'deletions': pr.get('deletions'),
-                'changed_files': pr.get('changed_files'),
+                'line_added': pr.get('line_added'),
+                'line_deleted': pr.get('line_deleted'),
+                'files_changed': pr.get('files_changed'),
                 'comments': pr.get('comments'),
                 'review_comments': pr.get('review_comments'),
                 'mergeable_state': pr.get('mergeable_state'),
-                'body': (pr.get('body', '') or '')[:500],  # Truncate to avoid CSV issues
+                'pr_description': (pr.get('pr_description', '') or '')
             }
             writer.writerow(row)
     
@@ -79,8 +79,8 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
     print(f"[INFO] Extracting commits from {len(pull_requests)} PRs...")
     
     fieldnames = [
-        'pr_id', 'pr_author', 'commit_sha', 'commit_author', 'commit_date',
-        'commit_message', 'additions', 'deletions', 'files_changed'
+        'pr_id', 'pr_author', 'commit_sha', 'author', 'commit_date',
+        'commit_message', 'lines_added', 'lines_deleted', 'files_changed'
     ]
     
     all_commits = []
@@ -100,11 +100,11 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
                 'pr_id': pr_id,
                 'pr_author': pr_author,
                 'commit_sha': commit.get('sha'),
-                'commit_author': author_data.get('name', 'Unknown'),
+                'author': author_data.get('name', 'Unknown'),
                 'commit_date': author_data.get('date'),
-                'commit_message': commit_data.get('message', '').split('\n')[0][:200],
-                'additions': None,  # Available in commit details
-                'deletions': None,  # Available in commit details
+                'commit_message': commit_data.get('message', '').split('\n')[0],
+                'lines_added': None,  # Available in commit details
+                'lines_deleted': None,  # Available in commit details
                 'files_changed': None,  # Available in commit details
             })
     
@@ -124,8 +124,8 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
     print(f"[INFO] Extracting file changes from {len(pull_requests)} PRs...")
     
     fieldnames = [
-        'pr_id', 'pr_author', 'commit_sha', 'filename', 'status', 'additions', 
-        'deletions', 'changes', 'patch_snippet'
+        'pr_id', 'pr_author', 'commit_sha', 'filename', 'status', 'lines_added', 
+        'lines_deleted', 'changes', 'patch_snippet'
     ]
     
     all_files = []
@@ -154,10 +154,10 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
                     'commit_sha': commit_sha,
                     'filename': file.get('filename'),
                     'status': file.get('status'),
-                    'additions': file.get('additions'),
-                    'deletions': file.get('deletions'),
+                    'lines_added': file.get('lines_added'),
+                    'lines_deleted': file.get('lines_deleted'),
                     'changes': file.get('changes'),
-                    'patch_snippet': (file.get('patch', '') or '')[:200],  # First 200 chars
+                    'patch_snippet': (file.get('patch', '') or ''),
                 })
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -176,7 +176,7 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
     print(f"[INFO] Extracting comments from {len(pull_requests)} PRs...")
     
     fieldnames = [
-        'pr_id', 'pr_author', 'comment_type', 'comment_id', 'comment_author',
+        'pr_id', 'pr_author', 'comment_type', 'comment_id', 'author',
         'comment_body', 'created_at', 'updated_at'
     ]
     
@@ -196,8 +196,8 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 'pr_author': pr_author,
                 'comment_type': 'review',
                 'comment_id': comment.get('id'),
-                'comment_author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
-                'comment_body': (comment.get('body', '') or '')[:500],
+                'author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
+                'comment_body': (comment.get('body', '') or ''),
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
             })
@@ -209,8 +209,8 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 'pr_author': pr_author,
                 'comment_type': 'issue',
                 'comment_id': comment.get('id'),
-                'comment_author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
-                'comment_body': (comment.get('body', '') or '')[:500],
+                'author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
+                'comment_body': (comment.get('body', '') or ''),
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
             })
