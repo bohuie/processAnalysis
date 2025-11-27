@@ -1,9 +1,6 @@
 import os
-import sys
 import time
 import pandas as pd
-import numpy as np
-import glob
 import re
 import json
 import ast
@@ -11,7 +8,6 @@ from pathlib import Path
 from tqdm import tqdm
 import ollama
 from datetime import datetime, timezone
-from dateutil import parser as date_parser
 
 # === SETUP ============================================================
 MODEL_NAME = "llama3.2:3b"
@@ -169,42 +165,6 @@ def enrich_prs_and_comments(team_folder):
     print(f"[SUCCESS] Updated review comments saved to: {review_comments_path}")
     print(f"[INFO] Final PR count: {len(enriched_prs)} | Final comments count: {len(review_comments_df)}")
 
-# === TIMESTAMP FIX FUNCTION ===========================================
-def adjust_merge_timestamps(combined_df):
-    """Fix chronological ordering by making merge events occur after the last commit."""
-    print("  Adjusting merge event timestamps for chronological ordering...")
-    
-    combined_df["created_at"] = pd.to_datetime(combined_df["created_at"], utc=True, errors="coerce")
-    
-    merge_mask = (combined_df["main_label"] == "Merge State")
-    commit_events = ["Feature Size", "Refactor Size"]
-    
-    pr_last_commit_times = {}
-    for pr_id in combined_df["pr_id"].unique():
-        pr_commits = combined_df[
-            (combined_df["pr_id"] == pr_id) & 
-            (combined_df["main_label"].isin(commit_events))
-        ]
-        if not pr_commits.empty:
-            pr_last_commit_times[pr_id] = pr_commits["created_at"].max()
-    
-    adjusted_count = 0
-    for idx in combined_df[merge_mask].index:
-        row = combined_df.loc[idx]
-        pr_id = row["pr_id"]
-        
-        merged_at = row.get("merged_at")
-        if pd.notna(merged_at):
-            combined_df.at[idx, "created_at"] = pd.to_datetime(merged_at, utc=True)
-            adjusted_count += 1
-        elif pr_id in pr_last_commit_times:
-            new_timestamp = pr_last_commit_times[pr_id] + pd.Timedelta(seconds=1)
-            combined_df.at[idx, "created_at"] = new_timestamp
-            adjusted_count += 1
-    
-    print(f"    Adjusted {adjusted_count} merge event timestamps")
-    return combined_df
-
 # === BRANCH NAME PROCESSING ===========================================
 def get_unique_branch_names(prs_df):
     """Extract unique branch names regardless of PR ID presence."""
@@ -343,7 +303,15 @@ def label_features_per_branch(prs_df):
     return pd.DataFrame(result_rows) if result_rows else pd.DataFrame()
 
 def assess_branch_meaningfulness(branch_name, pr_title, pr_description):
-    """Ask Ollama if the branch name is meaningful based on PR context."""
+    """Ask Ollama if the branch name is meaningful based on PR context.
+    
+    Returns:
+        tuple: (label, reason, confidence_score, llm_output)
+        - label: "Meaningful Branch Name" or "Random Branch Name"
+        - reason: The LLM's reasoning for the decision
+        - confidence_score: A score from 0-100 indicating confidence
+        - llm_output: The full raw output from the LLM
+    """
     prompt = f"""
         You are assessing whether this Git branch name clearly reflects the PR purpose.
 
@@ -351,20 +319,77 @@ def assess_branch_meaningfulness(branch_name, pr_title, pr_description):
         PR title: {pr_title}
         PR description: {pr_description}
 
-        If the branch name clearly relates to the feature, fix, or topic (e.g., 'feature/login', 'fix/navbar', 'refactor_api'),
-        respond with ONLY: "meaningful".
-        If it is generic, unclear, random, or unrelated (e.g., 'test', 'final', 'update', 'misc', 'main', 'newbranch'),
-        respond with ONLY: "random".
+        Please provide your assessment in the following format:
+        
+        REASON: [Your reasoning explaining why the branch name is meaningful or random]
+        PREDICTION: [Either "meaningful" or "random"]
+        CONFIDENCE: [A number from 0-100 indicating how confident you are in your prediction]
+
+        Guidelines:
+        - If the branch name clearly relates to the feature, fix, or topic (e.g., 'feature/login', 'fix/navbar', 'refactor_api'), it is "meaningful".
+        - If it is generic, unclear, random, or unrelated (e.g., 'test', 'final', 'update', 'misc', 'main', 'newbranch'), it is "random".
+        - Confidence should be high (80-100) when the branch name clearly matches or clearly doesn't match the PR purpose.
+        - Confidence should be lower (50-79) when there's some ambiguity.
+        - Confidence should be very low (0-49) only when you're very uncertain.
     """
     llm_output = ask_ollama(prompt).strip()
-    answer = llm_output.lower()
-
-    if "meaningful" in answer:
+    
+    # Parse the response to extract reason, prediction, and confidence
+    reason = ""
+    prediction = ""
+    confidence_score = None
+    
+    # Try to extract REASON
+    reason_match = re.search(r'REASON:\s*(.+?)(?=PREDICTION:|CONFIDENCE:|$)', llm_output, re.IGNORECASE | re.DOTALL)
+    if reason_match:
+        reason = reason_match.group(1).strip()
+    
+    # Try to extract PREDICTION
+    prediction_match = re.search(r'PREDICTION:\s*(meaningful|random)', llm_output, re.IGNORECASE)
+    if prediction_match:
+        prediction = prediction_match.group(1).lower()
+    else:
+        # Fallback: check if "meaningful" or "random" appears in the output
+        answer = llm_output.lower()
+        if "meaningful" in answer:
+            prediction = "meaningful"
+        else:
+            prediction = "random"
+    
+    # Try to extract CONFIDENCE score
+    confidence_match = re.search(r'CONFIDENCE:\s*(\d+)', llm_output, re.IGNORECASE)
+    if confidence_match:
+        try:
+            confidence_score = int(confidence_match.group(1))
+            # Clamp to 0-100 range
+            confidence_score = max(0, min(100, confidence_score))
+        except ValueError:
+            confidence_score = None
+    else:
+        # Try to find any number in the confidence section
+        confidence_section = re.search(r'CONFIDENCE:.*?(\d+)', llm_output, re.IGNORECASE | re.DOTALL)
+        if confidence_section:
+            try:
+                confidence_score = int(confidence_section.group(1))
+                confidence_score = max(0, min(100, confidence_score))
+            except ValueError:
+                confidence_score = None
+    
+    # If we couldn't extract reason, use a fallback
+    if not reason:
+        reason = "No explicit reason provided by LLM"
+    
+    # If we couldn't extract confidence, set a default based on prediction presence
+    if confidence_score is None:
+        confidence_score = 50  # Default to medium confidence if not found
+    
+    # Determine label
+    if prediction == "meaningful":
         label = "Meaningful Branch Name"
     else:
         label = "Random Branch Name"
 
-    return label, llm_output
+    return label, reason, confidence_score, llm_output
 
 def label_branch_names(prs_df):
     """Label: meaningful, random - Uses LLM to determine if branch names are descriptive."""
@@ -414,7 +439,7 @@ def label_branch_names(prs_df):
             pr_title = branch_context[branch_name]["pr_title"]
             pr_description = branch_context[branch_name]["pr_description"]
 
-        name_label, llm_raw = assess_branch_meaningfulness(
+        name_label, reason, confidence_score, llm_raw = assess_branch_meaningfulness(
             branch_name, pr_title, pr_description
         )
         
@@ -439,7 +464,9 @@ def label_branch_names(prs_df):
                     "pr_title": pr_title,
                     "pr_description": pr_description,
                     "branch_naming_label": name_label,
-                    "llm_reasoning": llm_raw,
+                    "llm_reasoning": reason,
+                    "llm_confidence_score": confidence_score,
+                    "llm_full_output": llm_raw,
                     "llm_timestamp": RUN_TIMESTAMP
                 })
 
@@ -878,13 +905,13 @@ def process_all_teams():
             print(f"[WARN] No labels generated for {team_name}.")
             continue
             
-        combined_df = pd.concat(all_labels_dfs, ignore_index=True)
-
-        # Adjust merge timestamps to ensure they are chronologically after the last commit
-        combined_df = adjust_merge_timestamps(combined_df)
-        
+        combined_df = pd.concat(all_labels_dfs, ignore_index=True)        
         # Normalize and sort final output
-        combined_df["created_at"] = combined_df["created_at"].apply(normalize_timestamp_to_utc_z)
+        # Convert timestamps to UTC Z format if needed
+        combined_df["created_at"] = combined_df["created_at"].apply(
+            lambda x: pd.to_datetime(x, errors='coerce', utc=True).strftime('%Y-%m-%dT%H:%M:%SZ')
+            if pd.notna(x) and not str(x).endswith("Z") else x
+        )
         combined_df = combined_df.sort_values(by=["pr_id", "created_at"]).reset_index(drop=True)
         
         diagnose_timestamp_issues(combined_df)
