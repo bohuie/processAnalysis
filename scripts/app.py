@@ -35,6 +35,8 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
     fieldnames = [
         'pr_id',
         'created_at',
+        'updated_at',
+        'closed_at',
         'merged_at',
         'pr_author',
         'pr_title',
@@ -42,11 +44,13 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
         'merged_by',
         'state',
         'head_branch',
+        'base_branch',
         'was_up_to_date_at_merge',
         'has_conflicts',
         'docs_updated',
         'num_reviewers'
     ]
+
 
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -57,6 +61,8 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
             row = {
                 'pr_id': pr.get('number'),
                 'created_at': pr.get('created_at'),
+                'updated_at': pr.get('updated_at'),
+                'closed_at': pr.get('closed_at'),
                 'merged_at': pr.get('merged_at'),
                 'pr_author': pr.get('user', {}).get('login') if pr.get('user') else None,
                 'pr_title': pr.get('pr_title'),
@@ -64,11 +70,13 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
                 'merged_by': pr.get('merged_by'),
                 'state': pr.get('state'),
                 'head_branch': pr.get('head', {}).get('ref') if pr.get('head') else None,
+                'base_branch': pr.get('base', {}).get('ref') if pr.get('base') else None,
                 'was_up_to_date_at_merge': pr.get('was_up_to_date_at_merge'),
                 'has_conflicts': pr.get('has_conflicts'),
                 'docs_updated': pr.get('docs_updated'),
                 'num_reviewers': pr.get('num_reviewers'),
             }
+
 
             writer.writerow(row)
     
@@ -76,22 +84,21 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
 
 
 def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
-    """Extract and save commit-level + file-level rows to CSV, matching old extractor logic."""
 
     if not pull_requests:
         print("[WARN] No pull requests to extract commits from")
         return
 
-    print(f"[INFO] Extracting commits (with file stats) from {len(pull_requests)} PRs...")
+    print(f"[INFO] Extracting commit-level rows from {len(pull_requests)} PRs...")
 
     fieldnames = [
         'pr_id',
         'commit_sha',
         'commit_message',
         'commit_date',
-        'file_path',
-        'lines_added',
-        'lines_deleted',
+        'file_path',        # always None in commit-level CSV
+        'lines_added',      # always None in commit-level CSV
+        'lines_deleted',    # always None in commit-level CSV
         'author',
         'pr_author'
     ]
@@ -112,48 +119,27 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
 
             commit_message = commit_data.get("message", "").split("\n")[0]
             commit_date = author_data.get("date")
-            commit_author_name = author_data.get("name", "Unknown")
+            commit_author_login = commit.get("author", {}).get("login", "Unknown")
 
-            # --- NEW: get file diffs exactly like old extractor ---
-            commit_details = extractor.extract_commit_details(commit_sha)
-            files = commit_details.get("files", [])
+            all_rows.append({
+                "pr_id": pr_id,
+                "commit_sha": commit_sha,
+                "commit_message": commit_message,
+                "commit_date": commit_date,
+                "file_path": None,
+                "lines_added": None,
+                "lines_deleted": None,
+                "author": commit_author_login,
+                "pr_author": pr_author
+            })
 
-            # If no file changes, still output ONE row for the commit
-            if not files:
-                all_rows.append({
-                    "pr_id": pr_id,
-                    "commit_sha": commit_sha,
-                    "commit_message": commit_message,
-                    "commit_date": commit_date,
-                    "file_path": None,
-                    "lines_added": None,
-                    "lines_deleted": None,
-                    "author": commit_author_name,
-                    "pr_author": pr_author
-                })
-                continue
-
-            # One row per file
-            for f in files:
-                all_rows.append({
-                    "pr_id": pr_id,
-                    "commit_sha": commit_sha,
-                    "commit_message": commit_message,
-                    "commit_date": commit_date,
-                    "file_path": f.get("filename"),
-                    "lines_added": f.get("additions"),
-                    "lines_deleted": f.get("deletions"),
-                    "author": commit_author_name,
-                    "pr_author": pr_author
-                })
-
-    # Write to CSV
+    # Write CSV
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(all_rows)
 
-    print(f"[SUCCESS] Saved {len(all_rows)} commit+file rows to: {filepath}")
+    print(f"[SUCCESS] Saved {len(all_rows)} commit rows to: {filepath}")
 
 
 def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
@@ -168,7 +154,7 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
         'pr_id',
         'pr_author',
         'commit_sha',
-        'author',            # ⭐ NEW — commit author
+        'author',           
         'filename',
         'status',
         'lines_added',
@@ -193,7 +179,7 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
 
             commit_details = extractor.extract_commit_details(commit_sha)
             commit_info = commit_details.get("commit", {})
-            commit_author = commit_info.get("author", {}).get("name", "Unknown")
+            commit_author = commit_details.get("author", {}).get("login", "Unknown")
 
             files = commit_details.get('files', [])
 
