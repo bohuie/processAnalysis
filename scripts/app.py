@@ -48,10 +48,11 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
         'was_up_to_date_at_merge',
         'has_conflicts',
         'docs_updated',
-        'num_reviewers'
+        'num_reviewers',
+        'lines_added',
+        'lines_deleted',
+        'files_changed'
     ]
-
-
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
@@ -75,8 +76,10 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
                 'has_conflicts': pr.get('has_conflicts'),
                 'docs_updated': pr.get('docs_updated'),
                 'num_reviewers': pr.get('num_reviewers'),
+                'lines_added': pr.get('lines_added'),
+                'lines_deleted': pr.get('lines_deleted'),
+                'files_changed': pr.get('files_changed'),
             }
-
 
             writer.writerow(row)
     
@@ -96,9 +99,8 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
         'commit_sha',
         'commit_message',
         'commit_date',
-        'file_path',        # always None in commit-level CSV
-        'lines_added',      # always None in commit-level CSV
-        'lines_deleted',    # always None in commit-level CSV
+        'lines_added',     
+        'lines_deleted',   
         'author',
         'pr_author'
     ]
@@ -119,18 +121,26 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
 
             commit_message = commit_data.get("message", "").split("\n")[0]
             commit_date = author_data.get("date")
-            commit_author_login = commit.get("author", {}).get("login", "Unknown")
+
+            # GitHub username of commit author
+            commit_author = commit.get("author")
+            commit_author_login = commit_author.get("login") if isinstance(commit_author, dict) else "Unknown"
+
+            commit_details = extractor.extract_commit_details(commit_sha)
+            stats = commit_details.get("stats", {})
+
+            total_added = stats.get("additions", 0)
+            total_deleted = stats.get("deletions", 0)
 
             all_rows.append({
                 "pr_id": pr_id,
                 "commit_sha": commit_sha,
                 "commit_message": commit_message,
                 "commit_date": commit_date,
-                "file_path": None,
-                "lines_added": None,
-                "lines_deleted": None,
+                "lines_added": total_added,
+                "lines_deleted": total_deleted,
                 "author": commit_author_login,
-                "pr_author": pr_author
+                "pr_author": pr_author,
             })
 
     # Write CSV
@@ -140,6 +150,7 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
         writer.writerows(all_rows)
 
     print(f"[SUCCESS] Saved {len(all_rows)} commit rows to: {filepath}")
+
 
 
 def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
@@ -155,7 +166,7 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
         'pr_author',
         'commit_sha',
         'author',           
-        'filename',
+        'file_path',
         'status',
         'lines_added',
         'lines_deleted',
@@ -189,7 +200,7 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
                     'pr_author': pr_author,
                     'commit_sha': commit_sha,
                     'author': commit_author,                      
-                    'filename': file.get('filename'),
+                    'file_path': file.get('filename'),
                     'status': file.get('status'),
                     'lines_added': file.get('additions'),         
                     'lines_deleted': file.get('deletions'),       
@@ -387,10 +398,23 @@ def extract_repository_data(
                 for f in files
             )
             pr["docs_updated"] = docs_updated
+            
+            # 6. Total added / deleted lines + number of changed files
+            file_changes = extractor.extract_pr_file_changes(pr_id)
 
-            # 6. Title / description normalization
+            total_added = sum(f.get("additions", 0) for f in file_changes)
+            total_deleted = sum(f.get("deletions", 0) for f in file_changes)
+            files_changed = len(file_changes)
+
+            pr["lines_added"] = total_added
+            pr["lines_deleted"] = total_deleted
+            pr["files_changed"] = files_changed
+
+
+            # 7. Title / description normalization
             pr["pr_title"] = full.get("title")
             pr["pr_description"] = full.get("body")
+            
 
             enriched_prs.append(pr)
 
@@ -458,7 +482,7 @@ if __name__ == "__main__":
     # ==================== CONFIGURATION ====================
     
     REPO_OWNER = "COSC-499-W2023" 
-    REPO_NAME = "year-long-project-team-21"
+    REPO_NAME = "year-long-project-team-15"
     OUTPUT_DIR = "./data"
     SAVE_JSON = True
     SAVE_CSV = True
