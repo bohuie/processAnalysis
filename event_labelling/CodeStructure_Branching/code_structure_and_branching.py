@@ -132,14 +132,12 @@ def enrich_prs_and_comments(team_folder):
         docs_updated = any("docs" in str(fp).lower() or "readme" in str(fp).lower() for fp in file_sums.index)
         return pd.Series({"top_file": top_file, "top_file_change_%": top_file_change_pct, "docs_updated": docs_updated})
 
-    # --- FIX START: Handle MergeError on rerun ---
     # Drop existing enrichment columns before merge to avoid conflicts if the script is re-run
     enrichment_cols = ["top_file", "top_file_change_%", "docs_updated"]
     for col in enrichment_cols:
         if col in prs_df.columns:
             print(f"[INFO] Dropping existing enrichment column: {col}")
             prs_df = prs_df.drop(columns=[col])
-    # --- FIX END ---
 
     print("[INFO] Calculating top file metrics per PR...")
     top_file_info = commits_df.groupby("pr_id", group_keys=False).apply(get_top_file_info).reset_index()
@@ -214,7 +212,6 @@ def get_branch_pr_mapping(prs_df):
 # === ANONYMIZATION ====================================================
 def load_anonymization_mapping():
     """Load anonymization mapping from JSON file."""
-    # FIXED PATH: Changed to '../confidential/...' to look in sibling directory
     mapping_path = "../confidential/anonymized_usernames.json"
     if os.path.exists(mapping_path):
         try:
@@ -716,8 +713,7 @@ def diagnose_timestamp_issues(df):
 # === MAIN PROCESSING ==================================================
 def process_all_teams():
     """Main function to process all teams."""
-    # FIXED PATH: Changed '../data/csv/' to 'data/csv/' 
-    base_path = Path("data/csv/") 
+    base_path = Path("data/csv/")
     
     if not base_path.exists():
         print(f"Base path '{base_path}' not found!")
@@ -831,7 +827,7 @@ def process_all_teams():
         
         print(f"[INFO] After filtering - PRs: {len(prs_df)}, Commits: {len(commits_df)}, File Changes: {len(commit_file_changes_df)}")
         
-        # 3. Anonymization (if enabled)
+        # 2. Anonymization (if enabled)
         if ANONYMIZE and name_map:
             print("[INFO] Applying anonymization...")
             for col in ["pr_author", "merged_by", "head_branch"]:
@@ -841,7 +837,7 @@ def process_all_teams():
                     else:
                         prs_df[col] = anonymize_column(prs_df[col], name_map)
         
-        # 4. Create timestamp lookup for PR creation times
+        # 3. Create timestamp lookup for PR creation times
         pr_created_at_lookup = {}
         for _, row in prs_df.iterrows():
             pr_id = row.get("pr_id")
@@ -850,8 +846,7 @@ def process_all_teams():
                 pr_created_at_lookup[pr_id] = created_at
         print(f"[INFO] Created timestamp lookup for {len(pr_created_at_lookup)} PRs")
 
-        # 5. Prepare commits data with branch names (if available)
-        # Check if branch_name exists in commits, if not, skip the merge
+        # 4. Prepare commits data with branch names (if available)
         if 'branch_name' in commits_df.columns:
             print("[INFO] Branch names found in commits data")
             commits_with_branch_df = commits_df[['pr_id', 'commit_sha', 'branch_name']].drop_duplicates(subset=['commit_sha'])
@@ -865,7 +860,6 @@ def process_all_teams():
                 )
         else:
             print("[INFO] No branch_name column in commits data - will work without it")
-            # Branch name not needed for the core labeling functions
         
         # --- Initialize List of all Labels ---
         all_labels_dfs = []
