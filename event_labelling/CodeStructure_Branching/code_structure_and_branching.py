@@ -21,9 +21,13 @@ ANONYMIZE = True
 # === FILE ENRICHMENT AND CLEANING =====================================
 def clean_review_comments(team_folder):
     """Clean review-comments.csv files by extracting usernames from dict format."""
-    review_comment_files = [f for f in team_folder.glob("*.csv") if f.name.endswith("_review-comments.csv")]
+    # Try both naming patterns: _comments.csv and _review-comments.csv
+    review_comment_files = (
+        [f for f in team_folder.glob("*.csv") if f.name.endswith("_comments.csv")] +
+        [f for f in team_folder.glob("*.csv") if f.name.endswith("_review-comments.csv")]
+    )
     if not review_comment_files:
-        print(f"[WARN] No review-comments.csv found in {team_folder}")
+        print(f"[WARN] No comments CSV found in {team_folder} (looking for *_comments.csv or *_review-comments.csv)")
         return
 
     for file_path in review_comment_files:
@@ -82,9 +86,19 @@ def enrich_prs_and_comments(team_folder):
     print(f"{'='*70}")
 
     all_csvs = list(team_folder.glob("*.csv"))
-    commits_path = next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
-    prs_path = next((f for f in all_csvs if f.name.endswith("_all_pull_requests.csv")), None)
-    review_comments_path = next((f for f in all_csvs if f.name.endswith("_review-comments.csv")), None)
+    # Try multiple naming patterns for flexibility
+    commits_path = (
+        next((f for f in all_csvs if f.name.endswith("_commits.csv")), None) or
+        next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
+    )
+    prs_path = (
+        next((f for f in all_csvs if f.name.endswith("_pull_requests.csv")), None) or
+        next((f for f in all_csvs if f.name.endswith("_all_pull_requests.csv")), None)
+    )
+    review_comments_path = (
+        next((f for f in all_csvs if f.name.endswith("_comments.csv")), None) or
+        next((f for f in all_csvs if f.name.endswith("_review-comments.csv")), None)
+    )
 
     if not all([commits_path, prs_path, review_comments_path]):
         print(f"[WARN] Missing one or more required files for {team_name}, skipping enrichment.")
@@ -169,42 +183,6 @@ def enrich_prs_and_comments(team_folder):
     print(f"[SUCCESS] Updated review comments saved to: {review_comments_path}")
     print(f"[INFO] Final PR count: {len(enriched_prs)} | Final comments count: {len(review_comments_df)}")
 
-# === TIMESTAMP FIX FUNCTION ===========================================
-def adjust_merge_timestamps(combined_df):
-    """Fix chronological ordering by making merge events occur after the last commit."""
-    print("  Adjusting merge event timestamps for chronological ordering...")
-    
-    combined_df["created_at"] = pd.to_datetime(combined_df["created_at"], utc=True, errors="coerce")
-    
-    merge_mask = (combined_df["main_label"] == "Merge State")
-    commit_events = ["Feature Size", "Refactor Size"]
-    
-    pr_last_commit_times = {}
-    for pr_id in combined_df["pr_id"].unique():
-        pr_commits = combined_df[
-            (combined_df["pr_id"] == pr_id) & 
-            (combined_df["main_label"].isin(commit_events))
-        ]
-        if not pr_commits.empty:
-            pr_last_commit_times[pr_id] = pr_commits["created_at"].max()
-    
-    adjusted_count = 0
-    for idx in combined_df[merge_mask].index:
-        row = combined_df.loc[idx]
-        pr_id = row["pr_id"]
-        
-        merged_at = row.get("merged_at")
-        if pd.notna(merged_at):
-            combined_df.at[idx, "created_at"] = pd.to_datetime(merged_at, utc=True)
-            adjusted_count += 1
-        elif pr_id in pr_last_commit_times:
-            new_timestamp = pr_last_commit_times[pr_id] + pd.Timedelta(seconds=1)
-            combined_df.at[idx, "created_at"] = new_timestamp
-            adjusted_count += 1
-    
-    print(f"    Adjusted {adjusted_count} merge event timestamps")
-    return combined_df
-
 # === BRANCH NAME PROCESSING ===========================================
 def get_unique_branch_names(prs_df):
     """Extract unique branch names regardless of PR ID presence."""
@@ -225,10 +203,13 @@ def get_branch_pr_mapping(prs_df):
     if "head_branch" not in prs_df.columns or "pr_id" not in prs_df.columns:
         return branch_mapping
     
+    # Handle both 'author' and 'pr_author' column names
+    author_col = "pr_author" if "pr_author" in prs_df.columns else "author"
+    
     for _, row in prs_df.iterrows():
         branch_name = str(row.get("head_branch", "")).strip()
         pr_id = row.get("pr_id")
-        pr_author = row.get("pr_author", "unknown")
+        pr_author = row.get(author_col, "unknown")
         created_at = row.get("created_at")
         
         if not branch_name or pd.isna(pr_id):
@@ -331,7 +312,7 @@ def label_features_per_branch(prs_df):
         for pr_info in pr_list:
             result_rows.append({
                 "pr_id": pr_info["pr_id"],
-                "pr_author": pr_info["pr_author"],
+                "pr_author": pr_info.get("pr_author", "unknown"),
                 "created_at": pr_info.get("created_at"),
                 "branch_name": branch_name,
                 "event": event,
@@ -357,20 +338,72 @@ def assess_branch_meaningfulness(branch_name, pr_title, pr_description):
         respond with ONLY: "random".
     """
     llm_output = ask_ollama(prompt).strip()
-    answer = llm_output.lower()
-
-    if "meaningful" in answer:
+    
+    # Parse the response to extract reason, prediction, and confidence
+    reason = ""
+    prediction = ""
+    confidence_score = None
+    
+    # Try to extract REASON
+    reason_match = re.search(r'REASON:\s*(.+?)(?=PREDICTION:|CONFIDENCE:|$)', llm_output, re.IGNORECASE | re.DOTALL)
+    if reason_match:
+        reason = reason_match.group(1).strip()
+    
+    # Try to extract PREDICTION
+    prediction_match = re.search(r'PREDICTION:\s*(meaningful|random)', llm_output, re.IGNORECASE)
+    if prediction_match:
+        prediction = prediction_match.group(1).lower()
+    else:
+        # Fallback: check if "meaningful" or "random" appears in the output
+        answer = llm_output.lower()
+        if "meaningful" in answer:
+            prediction = "meaningful"
+        else:
+            prediction = "random"
+    
+    # Try to extract CONFIDENCE score
+    confidence_match = re.search(r'CONFIDENCE:\s*(\d+)', llm_output, re.IGNORECASE)
+    if confidence_match:
+        try:
+            confidence_score = int(confidence_match.group(1))
+            # Clamp to 0-100 range
+            confidence_score = max(0, min(100, confidence_score))
+        except ValueError:
+            confidence_score = None
+    else:
+        # Try to find any number in the confidence section
+        confidence_section = re.search(r'CONFIDENCE:.*?(\d+)', llm_output, re.IGNORECASE | re.DOTALL)
+        if confidence_section:
+            try:
+                confidence_score = int(confidence_section.group(1))
+                confidence_score = max(0, min(100, confidence_score))
+            except ValueError:
+                confidence_score = None
+    
+    # If we couldn't extract reason, use a fallback
+    if not reason:
+        reason = "No explicit reason provided by LLM"
+    
+    # If we couldn't extract confidence, set a default based on prediction presence
+    if confidence_score is None:
+        confidence_score = 50  # Default to medium confidence if not found
+    
+    # Determine label
+    if prediction == "meaningful":
         label = "Meaningful Branch Name"
     else:
         label = "Random Branch Name"
 
-    return label, llm_output
+    return label, reason, confidence_score, llm_output
 
 def label_branch_names(prs_df):
     """Label: meaningful, random - Uses LLM to determine if branch names are descriptive."""
     print("  Evaluating branch naming via Ollama...")
     result_rows = []
     llm_reasoning_rows = []
+
+    # Handle both 'author' and 'pr_author' column names
+    author_col = "pr_author" if "pr_author" in prs_df.columns else "author"
 
     branch_mapping = get_branch_pr_mapping(prs_df)
     unique_branches = get_unique_branch_names(prs_df)
@@ -388,8 +421,8 @@ def label_branch_names(prs_df):
             if not pr_row.empty:
                 pr_row = pr_row.iloc[0]
                 branch_context[branch_name] = {
-                    "pr_title": str(pr_row.get("pr_title", "")),
-                    "pr_description": str(pr_row.get("pr_description", ""))
+                    "pr_title": str(pr_row.get("title", pr_row.get("pr_title", ""))),
+                    "pr_description": str(pr_row.get("body", pr_row.get("pr_description", "")))
                 }
 
     for branch_name in tqdm(unique_branches, desc="  Branch naming"):
@@ -398,7 +431,7 @@ def label_branch_names(prs_df):
                 for pr_info in branch_mapping[branch_name]:
                     result_rows.append({
                         "pr_id": pr_info["pr_id"],
-                        "pr_author": pr_info["pr_author"],
+                        "pr_author": pr_info.get("pr_author", "unknown"),
                         "created_at": pr_info.get("created_at"),
                         "branch_name": branch_name,
                         "event": "Random Branch Name",
@@ -414,7 +447,7 @@ def label_branch_names(prs_df):
             pr_title = branch_context[branch_name]["pr_title"]
             pr_description = branch_context[branch_name]["pr_description"]
 
-        name_label, llm_raw = assess_branch_meaningfulness(
+        name_label, reason, confidence_score, llm_raw = assess_branch_meaningfulness(
             branch_name, pr_title, pr_description
         )
         
@@ -422,7 +455,7 @@ def label_branch_names(prs_df):
             for pr_info in branch_mapping[branch_name]:
                 result_rows.append({
                     "pr_id": pr_info["pr_id"],
-                    "pr_author": pr_info["pr_author"],
+                    "pr_author": pr_info.get("pr_author", "unknown"),
                     "created_at": pr_info.get("created_at"),
                     "branch_name": branch_name,
                     "event": name_label,
@@ -433,13 +466,15 @@ def label_branch_names(prs_df):
                 
                 llm_reasoning_rows.append({
                     "pr_id": pr_info["pr_id"],
-                    "pr_author": pr_info["pr_author"],
+                    "pr_author": pr_info.get("pr_author", "unknown"),
                     "created_at": pr_info.get("created_at"),
                     "branch_name": branch_name,
                     "pr_title": pr_title,
                     "pr_description": pr_description,
                     "branch_naming_label": name_label,
-                    "llm_reasoning": llm_raw,
+                    "llm_reasoning": reason,
+                    "llm_confidence_score": confidence_score,
+                    "llm_full_output": llm_raw,
                     "llm_timestamp": RUN_TIMESTAMP
                 })
 
@@ -452,6 +487,9 @@ def label_branch_names(prs_df):
 def label_feature_size(commits_df, prs_df, pr_created_at_lookup):
     """Label: small, large - Features calculated PER COMMIT based on net new lines added."""
     result_rows = []
+    
+    # Handle both 'author' and 'pr_author' column names
+    author_col = "pr_author" if "pr_author" in prs_df.columns else "author"
     
     for commit_sha, commit_group in commits_df.groupby("commit_sha"):
         if len(commit_group) == 0:
@@ -487,7 +525,7 @@ def label_feature_size(commits_df, prs_df, pr_created_at_lookup):
         
         result_rows.append({
             "pr_id": pr_id,
-            "pr_author": pr_info["pr_author"],
+            "pr_author": pr_info.get(author_col, "unknown"),
             "created_at": created_at,
             "commit_sha": commit_sha,
             "event": event,
@@ -503,9 +541,12 @@ def label_refactor_size(commits_df, prs_df, pr_created_at_lookup):
     """Label: small, large - Refactors calculated PER FILE based on lines modified."""
     result_rows = []
     
+    # Handle both 'author' and 'pr_author' column names
+    author_col = "pr_author" if "pr_author" in prs_df.columns else "author"
+    
     if "file_path" not in commits_df.columns:
         print("    [WARN] No 'file_path' column in commits data.")
-        print("    [INFO] Make sure you're loading '*_commit_file_changes.csv'")
+        print("    [INFO] Make sure you're loading '*_file_changes.csv' or '*_commit_file_changes.csv'")
         print("    [INFO] Skipping refactor analysis.")
         return pd.DataFrame()
     
@@ -531,7 +572,7 @@ def label_refactor_size(commits_df, prs_df, pr_created_at_lookup):
         
         result_rows.append({
             "pr_id": pr_id,
-            "pr_author": pr_info["pr_author"],
+            "pr_author": pr_info.get(author_col, "unknown"),
             "created_at": created_at,
             "commit_sha": commit_sha,
             "filename": filename,
@@ -597,9 +638,12 @@ def label_pr_status(prs_df):
     """Label: closed, still_open, merged - Determines current status of the PR."""
     result_rows = []
     
+    # Handle both 'author' and 'pr_author' column names
+    author_col = "pr_author" if "pr_author" in prs_df.columns else "author"
+    
     for _, row in prs_df.iterrows():
         pr_id = row["pr_id"]
-        pr_author = row["pr_author"]
+        pr_author = row.get(author_col, "unknown")
         state = row.get("state", "")
         merged_at = row.get("merged_at", None)
         
@@ -635,9 +679,12 @@ def label_merge_state(prs_df):
     """Label: no_merge, self_merge, reviewed_merge - Determines how the PR was merged."""
     result_rows = []
     
+    # Handle both 'author' and 'pr_author' column names
+    author_col = "pr_author" if "pr_author" in prs_df.columns else "author"
+    
     for _, row in prs_df.iterrows():
         pr_id = row["pr_id"]
-        pr_author = row["pr_author"]
+        pr_author = row.get(author_col, "unknown")
         merged_at = row.get("merged_at")
         created_at = row.get("created_at")
         
@@ -735,10 +782,21 @@ def process_all_teams():
         print(f"{'='*60}")
         
         # Define paths for the team's data
+        # Try multiple naming patterns for flexibility
         team_folder_path = team_folder
-        prs_path = next((f for f in team_folder_path.glob("*.csv") if f.name.endswith("_all_pull_requests.csv")), None)
-        commits_path = next((f for f in team_folder_path.glob("*.csv") if f.name.endswith("_PR_commits.csv")), None)
-        commit_file_changes_path = next((f for f in team_folder_path.glob("*.csv") if f.name.endswith("_commit_file_changes.csv")), None)
+        all_csvs = list(team_folder_path.glob("*.csv"))
+        prs_path = (
+            next((f for f in all_csvs if f.name.endswith("_pull_requests.csv")), None) or
+            next((f for f in all_csvs if f.name.endswith("_all_pull_requests.csv")), None)
+        )
+        commits_path = (
+            next((f for f in all_csvs if f.name.endswith("_commits.csv")), None) or
+            next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
+        )
+        commit_file_changes_path = (
+            next((f for f in all_csvs if f.name.endswith("_file_changes.csv")), None) or
+            next((f for f in all_csvs if f.name.endswith("_commit_file_changes.csv")), None)
+        )
         
         if not all([prs_path, commits_path, commit_file_changes_path]):
             print(f"[WARN] Missing one or more required files for label generation for {team_name}. Skipping.")
@@ -767,9 +825,11 @@ def process_all_teams():
         ]
         
         # Filter bot PRs
+        # Handle both 'author' and 'pr_author' column names
         original_pr_count = len(prs_df)
-        if 'pr_author' in prs_df.columns:
-            prs_df = prs_df[~prs_df['pr_author'].str.lower().str.contains(
+        author_col_prs = "pr_author" if "pr_author" in prs_df.columns else "author"
+        if author_col_prs in prs_df.columns:
+            prs_df = prs_df[~prs_df[author_col_prs].str.lower().str.contains(
                 '|'.join(bot_patterns_regex), 
                 na=False, 
                 regex=True
@@ -791,9 +851,11 @@ def process_all_teams():
                 print(f"[INFO] Filtered out {bots_filtered} bot commits")
         
         # Filter bot commits from file changes too
+        # Handle both 'author' and 'commit_author' column names
         original_file_changes_count = len(commit_file_changes_df)
-        if 'author' in commit_file_changes_df.columns:
-            commit_file_changes_df = commit_file_changes_df[~commit_file_changes_df['author'].str.lower().str.contains(
+        author_col_file_changes = "commit_author" if "commit_author" in commit_file_changes_df.columns else "author"
+        if author_col_file_changes in commit_file_changes_df.columns:
+            commit_file_changes_df = commit_file_changes_df[~commit_file_changes_df[author_col_file_changes].str.lower().str.contains(
                 '|'.join(bot_patterns_regex), 
                 na=False, 
                 regex=True
@@ -807,7 +869,9 @@ def process_all_teams():
         # 3. Anonymization (if enabled)
         if ANONYMIZE and name_map:
             print("[INFO] Applying anonymization...")
-            for col in ["pr_author", "merged_by", "head_branch"]:
+            # Handle both 'author' and 'pr_author' column names
+            author_col = "pr_author" if "pr_author" in prs_df.columns else "author"
+            for col in [author_col, "merged_by", "head_branch"]:
                 if col in prs_df.columns:
                     if col == "head_branch":
                         prs_df[col] = anonymize_branch_names(prs_df[col], name_map)
@@ -824,7 +888,7 @@ def process_all_teams():
         print(f"[INFO] Created timestamp lookup for {len(pr_created_at_lookup)} PRs")
 
         # 5. Prepare commits data with branch names (if available)
-        # Check if branch_name exists in commits, if not, skip the merge
+        # Check if branch_name exists in commits, if not, try to get it from head_branch in commits
         if 'branch_name' in commits_df.columns:
             print("[INFO] Branch names found in commits data")
             commits_with_branch_df = commits_df[['pr_id', 'commit_sha', 'branch_name']].drop_duplicates(subset=['commit_sha'])
@@ -836,8 +900,19 @@ def process_all_teams():
                     on=['pr_id', 'commit_sha'], 
                     how='left'
                 )
+        elif 'head_branch' in commits_df.columns:
+            print("[INFO] Using head_branch from commits data as branch_name")
+            commits_with_branch_df = commits_df[['pr_id', 'commit_sha', 'head_branch']].drop_duplicates(subset=['commit_sha'])
+            commits_with_branch_df = commits_with_branch_df.rename(columns={'head_branch': 'branch_name'})
+            
+            if 'branch_name' not in commit_file_changes_df.columns:
+                commit_file_changes_df = commit_file_changes_df.merge(
+                    commits_with_branch_df,
+                    on=['pr_id', 'commit_sha'], 
+                    how='left'
+                )
         else:
-            print("[INFO] No branch_name column in commits data - will work without it")
+            print("[INFO] No branch_name or head_branch column in commits data - will work without it")
             # Branch name not needed for the core labeling functions
         
         # --- Initialize List of all Labels ---
@@ -879,12 +954,8 @@ def process_all_teams():
             continue
             
         combined_df = pd.concat(all_labels_dfs, ignore_index=True)
-
-        # Adjust merge timestamps to ensure they are chronologically after the last commit
-        combined_df = adjust_merge_timestamps(combined_df)
         
-        # Normalize and sort final output
-        combined_df["created_at"] = combined_df["created_at"].apply(normalize_timestamp_to_utc_z)
+        # Sort final output
         combined_df = combined_df.sort_values(by=["pr_id", "created_at"]).reset_index(drop=True)
         
         diagnose_timestamp_issues(combined_df)
