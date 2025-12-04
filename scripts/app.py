@@ -123,8 +123,17 @@ def save_commits_to_csv(extractor: PullRequestExtractor, pull_requests: List[dic
             commit_date = author_data.get("date")
 
             # GitHub username of commit author
-            commit_author = commit.get("author")
-            commit_author_login = commit_author.get("login") if isinstance(commit_author, dict) else "Unknown"
+            # 1. Try GitHub user object
+            api_author = commit.get("author")
+
+            # 2. If GitHub user is missing, fall back to raw commit name
+            if isinstance(api_author, dict) and api_author.get("login"):
+                commit_author_login = api_author["login"]
+            else:
+                # Fallback: use commit.commit.author.name
+                raw_author = commit.get("commit", {}).get("author", {})
+                commit_author_login = raw_author.get("name", "Unknown")
+
 
             commit_details = extractor.extract_commit_details(commit_sha)
             stats = commit_details.get("stats", {})
