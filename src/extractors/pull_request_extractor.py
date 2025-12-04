@@ -275,7 +275,14 @@ class PullRequestExtractor(GitExtractor):
         if not response:
             return None
         
-        return response.json()
+        data = response.json()
+        if data.get("merged_by"):
+            data["merged_by_login"] = data["merged_by"].get("login")
+        else:
+            data["merged_by_login"] = None
+
+        return data
+
 
     def extract_all_pull_requests(
         self,
@@ -539,7 +546,8 @@ class PullRequestExtractor(GitExtractor):
         """
         return {
             "review_comments": self.extract_pr_review_comments(pr_id),
-            "issue_comments": self.extract_pr_issue_comments(pr_id)
+            "issue_comments": self.extract_pr_issue_comments(pr_id),
+            "pr_reviews": self.extract_pr_reviews(pr_id)
         }
 
     def extract_pr_reviews(self, pr_id: int) -> List[Dict]:
@@ -833,7 +841,7 @@ if __name__ == "__main__":
     print("\n[1] Extracting single PR...")
     pr_data = extractor.extract_pull_request_by_id(100)
     if pr_data:
-        print(f"    PR #{pr_data['number']}: {pr_data['title']}")
+        print(f"    PR #{pr_data['number']}: {pr_data['pr_title']}")
         print(f"    State: {pr_data['state']}")
         print(f"    Author: {pr_data['user']['login']}")
     
@@ -865,7 +873,7 @@ if __name__ == "__main__":
     # Example 6: Extract complete PR
     print("\n[6] Extracting complete PR data...")
     complete_pr = extractor.extract_pr_complete(100)
-    print(f"    PR: {complete_pr['pr_data']['title'] if complete_pr['pr_data'] else 'N/A'}")
+    print(f"    PR: {complete_pr['pr_data']['pr_title'] if complete_pr['pr_data'] else 'N/A'}")
     print(f"    Commits: {len(complete_pr['commits'])}")
     print(f"    Files: {len(complete_pr['files'])}")
     print(f"    Review comments: {len(complete_pr['review_comments'])}")
