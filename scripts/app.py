@@ -226,7 +226,7 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
 
 
 def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
-    """Extract and save all comments from PRs to CSV."""
+    """Extract and save all comments from PRs to CSV, including raw review states."""
     if not pull_requests:
         print("[WARN] No pull requests to extract comments from")
         return
@@ -234,8 +234,15 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
     print(f"[INFO] Extracting comments from {len(pull_requests)} PRs...")
     
     fieldnames = [
-        'pr_id', 'pr_author', 'comment_type', 'comment_id', 'author',
-        'comment_body', 'created_at', 'updated_at'
+        'pr_id',
+        'pr_author',
+        'comment_type',
+        'comment_id',
+        'author',
+        'comment_body',
+        'created_at',
+        'updated_at',
+        'state',        # NEW COLUMN
     ]
     
     all_comments = []
@@ -246,9 +253,17 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
         
         print(f"[DEBUG] Extracting comments for PR #{pr_id}")
         comments = extractor.extract_pr_all_comments(pr_id)
+
+        # Build review_id -> state map from /pulls/{pr}/reviews
+        reviews = comments.get('pr_reviews', [])
+        review_state = {
+            r.get('id'): (r.get('state') or "")
+            for r in reviews
+        }
         
-        # Review comments (inline code comments)
+        # 1) Review comments (inline code comments)
         for comment in comments.get('review_comments', []):
+            parent_review_id = comment.get('pull_request_review_id')
             all_comments.append({
                 'pr_id': pr_id,
                 'pr_author': pr_author,
@@ -258,9 +273,11 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 'comment_body': (comment.get('body', '') or ''),
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
+                # state copied from parent review if known, otherwise blank
+                'state': review_state.get(parent_review_id, ""),
             })
         
-        # Issue comments (PR conversation tab comments)
+        # 2) Issue comments (PR conversation tab comments)
         for comment in comments.get('issue_comments', []):
             all_comments.append({
                 'pr_id': pr_id,
@@ -271,19 +288,23 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 'comment_body': (comment.get('body', '') or ''),
                 'created_at': comment.get('created_at'),
                 'updated_at': comment.get('updated_at'),
+                # GitHub doesn't expose a review state here → leave blank (no remap)
+                'state': "",
             })
             
-        # Review comments (main review comments from when reviewer clicks "Review Changes")
-        for comment in comments.get('pr_reviews', []):
+        # 3) Review objects (when reviewer clicks "Review changes")
+        for review in reviews:
             all_comments.append({
                 'pr_id': pr_id,
                 'pr_author': pr_author,
                 'comment_type': 'review',
-                'comment_id': comment.get('id'),
-                'author': comment.get('user', {}).get('login') if comment.get('user') else 'Unknown',
-                'comment_body': (comment.get('body', '') or ''),
-                'created_at': comment.get('submitted_at'),
-                'updated_at': comment.get('submitted_at'),
+                'comment_id': review.get('id'),
+                'author': review.get('user', {}).get('login') if review.get('user') else 'Unknown',
+                'comment_body': (review.get('body', '') or ''),
+                'created_at': review.get('submitted_at'),
+                'updated_at': review.get('submitted_at'),
+                # raw GitHub state: APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED / etc.
+                'state': (review.get('state') or ""),
             })
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
@@ -491,7 +512,7 @@ if __name__ == "__main__":
     # ==================== CONFIGURATION ====================
     
     REPO_OWNER = "COSC-499-W2023" 
-    REPO_NAME = "year-long-project-team-15"
+    REPO_NAME = "year-long-project-team-3"
     OUTPUT_DIR = "./data"
     SAVE_JSON = True
     SAVE_CSV = True
