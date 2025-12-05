@@ -197,25 +197,33 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
         for commit in commits:
             commit_sha = commit.get('sha')
 
-            commit_details = extractor.extract_commit_details(commit_sha)
-            commit_info = commit_details.get("commit", {})
-            commit_author = commit_details.get("author", {}).get("login", "Unknown")
+            # --- Author resolution: same strategy as save_commits_to_csv ---
+            api_author = commit.get("author")
 
-            files = commit_details.get('files', [])
+            if isinstance(api_author, dict) and api_author.get("login"):
+                commit_author = api_author["login"]
+            else:
+                raw_author = commit.get("commit", {}).get("author", {})
+                commit_author = raw_author.get("name", "Unknown")
+
+            # --- Safely fetch commit details (for files only) ---
+            commit_details = extractor.extract_commit_details(commit_sha) or {}
+            files = commit_details.get('files') or []
 
             for file in files:
                 all_files.append({
                     'pr_id': pr_id,
                     'pr_author': pr_author,
                     'commit_sha': commit_sha,
-                    'author': commit_author,                      
+                    'author': commit_author,
                     'file_path': file.get('filename'),
                     'status': file.get('status'),
-                    'lines_added': file.get('additions'),         
-                    'lines_deleted': file.get('deletions'),       
+                    'lines_added': file.get('additions'),
+                    'lines_deleted': file.get('deletions'),
                     'changes': file.get('changes'),
                     'patch_snippet': (file.get('patch', '') or '')
                 })
+
 
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
