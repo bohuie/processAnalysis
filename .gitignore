@@ -1,0 +1,21 @@
+# Ignore Python cache files in src/
+src/**/__pycache__/
+src/**/*.py[cod]
+src/**/*$py.class
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Environment files
+.env
+.env.local
+*.env
+
+# Data
+data/*/
+
+# Virtual Environment files
+venv/
