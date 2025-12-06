@@ -23,7 +23,7 @@ def find_file(folder, pattern):
         return None
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../"))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 DATA_FOLDER = os.path.join(PROJECT_ROOT, "data", "csv")
 
 team_folders = glob.glob(os.path.join(DATA_FOLDER, "year-long-project-team-*"))
