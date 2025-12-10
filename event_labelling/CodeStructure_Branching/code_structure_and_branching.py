@@ -9,7 +9,7 @@ from tqdm import tqdm
 from datetime import datetime
 
 # Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import utilities from src/utils
 from src.utils.ollama_offline import connect_ollama_offline

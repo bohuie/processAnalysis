@@ -8,7 +8,7 @@ import numpy as np
 def _filter_by_valid_pr_ids(
     commits_df: pd.DataFrame,
     prs_df: pd.DataFrame,
-    review_comments_df: pd.DataFrame | None = None,
+    review_comments_df: Union[pd.DataFrame, None] = None,
 ):
     """Keep only PRs/comments whose pr_id appears in commits_df."""
     for name, df in [("commits", commits_df), ("prs", prs_df)]:
