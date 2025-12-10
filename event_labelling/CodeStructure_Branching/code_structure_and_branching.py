@@ -203,7 +203,7 @@ def get_unique_branch_names(prs_df):
     print(f"    Found {len(branch_names)} unique branch names")
     return branch_names
 
-def get_branch_pr_mapping(prs_df):
+def create_branch_struct(prs_df):
     """Create a mapping of branch names to their PR IDs and authors."""
     branch_mapping = {}
     
@@ -283,7 +283,7 @@ def label_features_per_branch(prs_df):
     """Label: one, multiple - Counts how many features (PRs) were created per branch."""
     result_rows = []
     
-    branch_mapping = get_branch_pr_mapping(prs_df)
+    branch_mapping = create_branch_struct(prs_df)
     
     for branch_name, pr_list in branch_mapping.items():
         count = len(pr_list)
@@ -399,7 +399,7 @@ def label_branch_names(prs_df):
     result_rows = []
     llm_reasoning_rows = []
 
-    branch_mapping = get_branch_pr_mapping(prs_df)
+    branch_mapping = create_branch_struct(prs_df)
     unique_branches = get_unique_branch_names(prs_df)
     
     if not unique_branches:
