@@ -317,7 +317,11 @@ def assess_branch_meaningfulness(branch_name, pr_title, pr_description):
     return label, reason, confidence_score, llm_output
 
 def label_branch_names(prs_df):
-    """Label: meaningful, random - Uses LLM to determine if branch names are descriptive."""
+    """Label: meaningful, random - Uses LLM to determine if branch names are descriptive.
+    
+    For each branch, collects ALL pr_titles and pr_descriptions that belong to it,
+    then passes them all to the LLM for assessment.
+    """
     print("  Evaluating branch naming via Ollama...")
     result_rows = []
     llm_reasoning_rows = []
@@ -329,18 +333,30 @@ def label_branch_names(prs_df):
         print("    No branch names found to evaluate")
         return pd.DataFrame(), pd.DataFrame()
 
-    branch_context = {}
+    # Build comprehensive context for each branch: all PRs and their info
+    branch_pr_info = {}
     for branch_name, pr_list in branch_mapping.items():
-        if pr_list:
-            first_pr = pr_list[0]
-            pr_id = first_pr["pr_id"]
+        pr_titles = []
+        pr_descriptions = []
+        
+        for pr_info in pr_list:
+            pr_id = pr_info["pr_id"]
             pr_row = prs_df[prs_df["pr_id"] == pr_id]
             if not pr_row.empty:
                 pr_row = pr_row.iloc[0]
-                branch_context[branch_name] = {
-                    "pr_title": str(pr_row.get("pr_title", "")),
-                    "pr_description": str(pr_row.get("pr_description", ""))
-                }
+                title = str(pr_row.get("pr_title", "")).strip()
+                description = str(pr_row.get("pr_description", "")).strip()
+                
+                if title:
+                    pr_titles.append(title)
+                if description:
+                    pr_descriptions.append(description)
+        
+        branch_pr_info[branch_name] = {
+            "pr_titles": pr_titles,
+            "pr_descriptions": pr_descriptions,
+            "pr_count": len(pr_list)
+        }
 
     for branch_name in tqdm(unique_branches, desc="  Branch naming"):
         if branch_name.lower() in ["main", "master"]:
@@ -358,14 +374,20 @@ def label_branch_names(prs_df):
                     })
             continue
 
-        pr_title = ""
-        pr_description = ""
-        if branch_name in branch_context:
-            pr_title = branch_context[branch_name]["pr_title"]
-            pr_description = branch_context[branch_name]["pr_description"]
+        # Get all PR titles and descriptions for this branch
+        pr_titles = branch_pr_info[branch_name]["pr_titles"]
+        pr_descriptions = branch_pr_info[branch_name]["pr_descriptions"]
+        pr_count = branch_pr_info[branch_name]["pr_count"]
+        
+        # Combine all titles and descriptions into a single context
+        all_pr_context = f"PR Count: {pr_count}\n"
+        if pr_titles:
+            all_pr_context += f"PR Titles:\n" + "\n".join(f"  - {title}" for title in pr_titles) + "\n"
+        if pr_descriptions:
+            all_pr_context += f"PR Descriptions:\n" + "\n".join(f"  - {desc}" for desc in pr_descriptions) + "\n"
 
         name_label, reason, confidence_score, llm_raw = assess_branch_meaningfulness(
-            branch_name, pr_title, pr_description
+            branch_name, all_pr_context, ""
         )
         
         if branch_name in branch_mapping:
@@ -386,8 +408,9 @@ def label_branch_names(prs_df):
                     "pr_author": pr_info["pr_author"],
                     "created_at": pr_info.get("created_at"),
                     "branch_name": branch_name,
-                    "pr_title": pr_title,
-                    "pr_description": pr_description,
+                    "pr_titles": " | ".join(pr_titles),
+                    "pr_descriptions": " | ".join(pr_descriptions),
+                    "pr_count": pr_count,
                     "branch_naming_label": name_label,
                     "llm_reasoning": reason,
                     "llm_confidence_score": confidence_score,
