@@ -42,7 +42,9 @@ def drop_bots_in_author_like_columns(df: pd.DataFrame, df_label: str) -> pd.Data
     )
     
 
-LOG_PATTERN = re.compile(r"\blog(s?)\b", re.IGNORECASE)
+LOG_PATTERN = re.compile(
+    r"(?i)(?:\blogs?\b|weeklylogs?\b|teamlogs?\b|personallogs?\b)"
+)
 
 
 def drop_log_rows(df: pd.DataFrame, df_label: str) -> pd.DataFrame:

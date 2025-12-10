@@ -59,7 +59,7 @@ load_dotenv()
 RUN_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
+PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
 DATA_FOLDER = os.path.join(PROJECT_ROOT, "data", "csv")
 os.makedirs(DATA_FOLDER, exist_ok=True)
 CACHE_PATH = os.path.join(DATA_FOLDER, "commit_message_cache.csv")
@@ -132,9 +132,14 @@ def process_all_teams() -> None:
         print(f"[OK] PRs: {len(prs_df)} | Commits: {len(commits_df)} | Reviews: {len(reviews_df)}")
 
         # === Normalize PR IDs ========================================
-        dfs = {"prs_df": prs_df, "commits_df": commits_df, "reviews_df": reviews_df}
-        dfs = normalize_pr_ids(dfs)
-        prs_df, commits_df, reviews_df = dfs["prs_df"], dfs["commits_df"], dfs["reviews_df"]
+        named_dfs = [
+            ("prs_df", prs_df),
+            ("commits_df", commits_df),
+            ("reviews_df", reviews_df),
+        ]
+        normalize_pr_ids(named_dfs)
+        prs_df, commits_df, reviews_df = [df for _, df in named_dfs]
+
 
         # === STEP 0: LOOKUPS ==========================================
         print("[STEP 0] Building timestamp lookups...")
@@ -199,18 +204,25 @@ def process_all_teams() -> None:
             combined["pr_author"].replace("", np.nan, inplace=True)
             combined["pr_author"].fillna("unknown", inplace=True)
 
-        # event column -> ensure it's a plain string
-        combined["event"] = combined["event"].apply(
-            lambda x: str(x) if isinstance(x, list) else x
-        )
-
         combined = combined.sort_values("created_at").reset_index(drop=True)
 
-
         pr_rows = []
+
         for _, row in combined.iterrows():
-            evs = [e for e in row["event"] if isinstance(e, str)]
+            ev_val = row["event"]
+
+            # Normalize to a list of strings
+            if isinstance(ev_val, list):
+                evs = [e for e in ev_val if isinstance(e, str)]
+            elif isinstance(ev_val, str):
+                # Single label stored as a string
+                evs = [ev_val]
+            else:
+                # NaN or anything else → no events
+                evs = []
+
             pr_evs = [e for e in evs if e in PR_LABELS]
+
             if pr_evs:
                 new_row = row.copy()
                 new_row["event"] = str(pr_evs)
