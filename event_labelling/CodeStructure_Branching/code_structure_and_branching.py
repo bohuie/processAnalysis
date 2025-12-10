@@ -1,13 +1,12 @@
 import os
 import sys
-import time
 import pandas as pd
 import re
 import json
 import ast
 from pathlib import Path
 from tqdm import tqdm
-from datetime import datetime, timezone
+from datetime import datetime
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -15,10 +14,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 # Import utilities from src/utils
 from src.utils.ollama_offline import connect_ollama_offline
 from src.utils.label_merge import label_merge_state
-from src.utils.normalize_pr_id import normalize_pr_ids
 from src.utils.anonymize_data import anonymize_username
 from src.utils.anonymize_columns import (
-    anonymize_author_columns,
     anonymize_column,
     anonymize_branch_names,
 )
@@ -50,20 +47,8 @@ def extract_username(value):
             pass
     return val
 
-def get_top_file_info_single(group):
-    """Calculate top file info from commit_file_changes data."""
-    file_sums = group.groupby("file_path")[["lines_added", "lines_deleted"]].sum()
-    file_sums["total_change"] = file_sums["lines_added"] + file_sums["lines_deleted"]
-    if file_sums.empty:
-        return pd.Series({"top_file": None, "top_file_change_%": None, "docs_updated": False})
-
-    top_file_row = file_sums.sort_values("total_change", ascending=False).iloc[0]
-    top_file = top_file_row.name
-    top_file_total_change = top_file_row["total_change"]
-    total_pr_change = file_sums["total_change"].sum()
-    top_file_change_pct = round((top_file_total_change / total_pr_change) * 100, 2) if total_pr_change > 0 else None
-    docs_updated = any("docs" in str(fp).lower() or "readme" in str(fp).lower() for fp in file_sums.index)
-    return pd.Series({"top_file": top_file, "top_file_change_%": top_file_change_pct, "docs_updated": docs_updated})
+# `get_top_file_info_single` removed — replaced by utilities in `src.utils.enrich_columns`
+# Use `add_top_file_metrics` / `add_docs_updated_flag` from `src.utils.enrich_columns` instead.
 
 def clean_review_comments(team_folder):
     """Clean review-comments.csv files by extracting usernames from dict format."""
@@ -605,46 +590,8 @@ def label_pr_status(prs_df):
     
     return pd.DataFrame(result_rows) if result_rows else pd.DataFrame()
 
-# === MERGE STATE LABELING =============================================
-def label_merge_state(prs_df):
-    """Label: no_merge, self_merge, reviewed_merge - Determines how the PR was merged."""
-    result_rows = []
-    
-    for _, row in prs_df.iterrows():
-        pr_id = row["pr_id"]
-        pr_author = row["pr_author"]
-        merged_at = row.get("merged_at")
-        created_at = row.get("created_at")
-        
-        merged_by_from_row = row.get("merged_by")
-        
-        if pd.isna(merged_at) or merged_at == '' or merged_at is None:
-            event = "no_merge"
-            llm_output = "rule-based: PR not merged"
-        else:
-            merged_by = str(merged_by_from_row).strip()
-            pr_author_str = str(pr_author).strip()
-            
-            if merged_by and pr_author_str and merged_by.lower() == pr_author_str.lower(): 
-                event = "self_merge"
-                llm_output = f"rule-based: self-merged by {pr_author}"
-            else:
-                event = "reviewed_merge"
-                merger_info = f"by {merged_by}" if merged_by else "(merger unknown)"
-                llm_output = f"rule-based: merged {merger_info}"
-        
-        result_rows.append({
-            "pr_id": pr_id,
-            "pr_author": pr_author,
-            "created_at": created_at,
-            "merged_at": merged_at,
-            "event": event,
-            "main_label": "Merge State",
-            "llm_output": llm_output,
-            "llm_timestamp": RUN_TIMESTAMP
-        })
-    
-    return pd.DataFrame(result_rows)
+# `label_merge_state` is provided by `src.utils.label_merge` and imported at module top.
+# Using the utility implementation instead of the local duplicate.
 
 def diagnose_timestamp_issues(df):
     """Check for timestamp issues in the final dataframe."""
