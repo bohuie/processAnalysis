@@ -63,20 +63,6 @@ def preprocess_team_csvs(
     commits_path: str,
     reviews_path: str,
 ) -> None:
-    """
-    Run all STEP -1A ... STEP -1B style preprocessing for a given team:
-
-      1. Load raw PR / commits / reviews CSVs.
-      2. Remove bot rows in any author-like / merged_by columns.
-      3. Drop rows mentioning 'log'/'logs'.
-      4. Apply review-specific filters (self-review, empty COMMENTED review, conversation).
-      5. Overwrite the CSVs with cleaned data.
-      6. Add order_of_review to review-comments via enrichment utility.
-      7. Anonymize author columns on disk (prs, commits, reviews).
-
-    This function does not return DataFrames; it mutates the CSV files,
-    so the main script can reload them afterward.
-    """
     print("[STEP -1A] Loading raw CSVs for preprocessing...")
     raw_prs_df = pd.read_csv(prs_path)
     raw_commits_df = pd.read_csv(commits_path)
@@ -95,20 +81,29 @@ def preprocess_team_csvs(
     # 3) Review-specific filters BEFORE order_of_review
     raw_reviews_df = _apply_review_specific_filters(raw_reviews_df, team_name)
 
-    # Overwrite the CSVs with cleaned data (still de-anonymized at this point)
+    # 4) Overwrite the CSVs with cleaned (still de-anonymized) data
     raw_prs_df.to_csv(prs_path, index=False)
     raw_commits_df.to_csv(commits_path, index=False)
     raw_reviews_df.to_csv(reviews_path, index=False)
 
-    # 4) Add order_of_review to review comments (reviewer-based logic)
+    # 5) Add order_of_review to review comments (reviewer-based logic)
     print("[STEP -1F] Adding order_of_review to review-comments via enrichment utility...")
     add_order_of_review(team_folder)
 
-    # 5) Anonymize author columns (on disk)
+    # 6) Reload CSVs (now including order_of_review in reviews)
     print("[STEP -1G] Anonymizing author columns on disk...")
-    csv_paths = {
-        "prs": prs_path,
-        "commits": commits_path,
-        "reviews": reviews_path,
-    }
-    anonymize_author_columns(csv_paths)
+    prs_df = pd.read_csv(prs_path)
+    commits_df = pd.read_csv(commits_path)
+    reviews_df = pd.read_csv(reviews_path)
+
+    # Pass actual DataFrames, not paths
+    anonymize_author_columns([
+        ("prs", prs_df),
+        ("commits", commits_df),
+        ("reviews", reviews_df),
+    ])
+
+    # 7) Save anonymized versions back to disk
+    prs_df.to_csv(prs_path, index=False)
+    commits_df.to_csv(commits_path, index=False)
+    reviews_df.to_csv(reviews_path, index=False)
