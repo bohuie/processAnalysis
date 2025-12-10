@@ -24,6 +24,11 @@ from src.utils.enrich_columns import (
     add_docs_updated_flag,
     add_order_of_review,
 )
+from src.utils.botFilter import (
+    remove_bot_prs,
+    remove_bot_commits,
+    filter_bots_from_multiple_columns,
+)
 
 # === SETUP ============================================================
 MODEL_NAME = "llama3.2:3b"
@@ -671,58 +676,40 @@ def process_all_teams():
         commit_file_changes_df = pd.read_csv(commit_file_changes_path)
         
         # --- Pre-processing for all labelers ---
-        # 1. Bot Removal
-        print("[INFO] Filtering bot PRs and commits...")
-        bot_patterns_regex = [
-            r'\[bot\]$',
-            r'^bot[-_]',
-            r'[-_]bot',
-            r'^bot\d',
-            r'dependabot',
-            r'github-actions',
-            r'renovate',
-            r'greenkeeper',
-            r'codecov',
-            r'snyk-bot',
-            r'github-classroom',
-        ]
-        
-        # Filter bot PRs
-        original_pr_count = len(prs_df)
-        if 'pr_author' in prs_df.columns:
-            prs_df = prs_df[~prs_df['pr_author'].str.lower().str.contains(
-                '|'.join(bot_patterns_regex), 
-                na=False, 
-                regex=True
-            )]
-            bots_filtered = original_pr_count - len(prs_df)
-            if bots_filtered > 0:
-                print(f"[INFO] Filtered out {bots_filtered} bot PRs")
-        
-        # Filter bot commits
-        original_commit_count = len(commits_df)
-        if 'author' in commits_df.columns:
-            commits_df = commits_df[~commits_df['author'].str.lower().str.contains(
-                '|'.join(bot_patterns_regex), 
-                na=False, 
-                regex=True
-            )]
-            bots_filtered = original_commit_count - len(commits_df)
-            if bots_filtered > 0:
-                print(f"[INFO] Filtered out {bots_filtered} bot commits")
-        
-        # Filter bot commits from file changes too
-        original_file_changes_count = len(commit_file_changes_df)
-        if 'author' in commit_file_changes_df.columns:
-            commit_file_changes_df = commit_file_changes_df[~commit_file_changes_df['author'].str.lower().str.contains(
-                '|'.join(bot_patterns_regex), 
-                na=False, 
-                regex=True
-            )]
-            bots_filtered = original_file_changes_count - len(commit_file_changes_df)
-            if bots_filtered > 0:
-                print(f"[INFO] Filtered out {bots_filtered} bot file changes")
-        
+        # 1. Bot Removal (use centralized utilities)
+        print("[INFO] Filtering bot PRs and commits using botFilter utilities...")
+
+        # PRs: prefer convenience wrapper which expects 'pr_author' column
+        try:
+            prs_df = remove_bot_prs(prs_df)
+        except KeyError:
+            # Column missing, skip PR bot filtering but warn
+            print("[WARN] 'pr_author' column not found in PRs DataFrame; skipping PR bot filtering")
+
+        # Commits: use convenience wrapper which expects 'author' column
+        try:
+            commits_df = remove_bot_commits(commits_df)
+        except KeyError:
+            print("[WARN] 'author' column not found in commits DataFrame; skipping commit bot filtering")
+
+        # Commit file changes: try to filter by 'author' if present, otherwise try multiple columns
+        try:
+            commit_file_changes_df = remove_bot_commits(commit_file_changes_df)
+        except KeyError:
+            # If 'author' not present, but multiple possible username columns exist, try filtering across them
+            possible_username_cols = [c for c in ['author', 'committer', 'username'] if c in commit_file_changes_df.columns]
+            if possible_username_cols:
+                try:
+                    commit_file_changes_df = filter_bots_from_multiple_columns(
+                        commit_file_changes_df,
+                        username_columns=possible_username_cols,
+                        filter_mode='any'
+                    )
+                except KeyError as e:
+                    print(f"[WARN] Bot filtering skipped for commit file changes: {e}")
+            else:
+                print("[WARN] No username-like columns found in commit file changes; skipping bot filtering for file changes")
+
         print(f"[INFO] After filtering - PRs: {len(prs_df)}, Commits: {len(commits_df)}, File Changes: {len(commit_file_changes_df)}")
         
         # 2. Anonymization (if enabled)
