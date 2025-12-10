@@ -83,13 +83,6 @@ def clean_review_comments(team_folder):
         for b, a in zip(before_sample, after_sample):
             print(f"   {b}  →  {a}")
 
-        if "created_at" in df.columns:
-            print("[INFO] Converting 'created_at' to UTC Z format (if needed)...")
-            df["created_at"] = df["created_at"].apply(
-                lambda x: pd.to_datetime(x, errors='coerce', utc=True).strftime('%Y-%m-%dT%H:%M:%SZ')
-                if pd.notna(x) and not str(x).endswith("Z") else x
-            )
-
         try:
             df.to_csv(file_path, index=False)
             print(f"[SUCCESS] Overwritten cleaned file: {file_path}")
@@ -784,13 +777,7 @@ def process_all_teams():
             print(f"[WARN] No labels generated for {team_name}.")
             continue
             
-        combined_df = pd.concat(all_labels_dfs, ignore_index=True)        
-        # Normalize and sort final output
-        # Convert timestamps to UTC Z format if needed
-        combined_df["created_at"] = combined_df["created_at"].apply(
-            lambda x: pd.to_datetime(x, errors='coerce', utc=True).strftime('%Y-%m-%dT%H:%M:%SZ')
-            if pd.notna(x) and not str(x).endswith("Z") else x
-        )
+        combined_df = pd.concat(all_labels_dfs, ignore_index=True)
         combined_df = combined_df.sort_values(by=["pr_id", "created_at"]).reset_index(drop=True)
         
         diagnose_timestamp_issues(combined_df)
