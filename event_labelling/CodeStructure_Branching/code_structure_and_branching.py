@@ -15,6 +15,44 @@ RUN_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
 ANONYMIZE = True
 
 # === FILE ENRICHMENT AND CLEANING =====================================
+def extract_username(value):
+    """Extract username if cell looks like a dict, otherwise return original."""
+    if pd.isna(value):
+        return value
+    val = str(value).strip()
+    if val.startswith("{") and "username" in val:
+        try:
+            parsed = ast.literal_eval(val)
+            if isinstance(parsed, dict) and "username" in parsed:
+                return parsed["username"]
+        except Exception:
+            pass
+    return val
+
+def get_top_file_info_single(group):
+    """Calculate top file info from commit_file_changes data."""
+    file_sums = group.groupby("file_path")[["lines_added", "lines_deleted"]].sum()
+    file_sums["total_change"] = file_sums["lines_added"] + file_sums["lines_deleted"]
+    if file_sums.empty:
+        return pd.Series({"top_file": None, "top_file_change_%": None, "docs_updated": False})
+
+    top_file_row = file_sums.sort_values("total_change", ascending=False).iloc[0]
+    top_file = top_file_row.name
+    top_file_total_change = top_file_row["total_change"]
+    total_pr_change = file_sums["total_change"].sum()
+    top_file_change_pct = round((top_file_total_change / total_pr_change) * 100, 2) if total_pr_change > 0 else None
+    docs_updated = any("docs" in str(fp).lower() or "readme" in str(fp).lower() for fp in file_sums.index)
+    return pd.Series({"top_file": top_file, "top_file_change_%": top_file_change_pct, "docs_updated": docs_updated})
+
+def calculate_order_of_review(review_comments_df):
+    """Calculate order of review ranking (first, second, additional)."""
+    return (
+        review_comments_df.groupby("pr_id")["created_at"]
+        .rank(method="first")
+        .astype(int)
+        .apply(lambda x: "first" if x == 1 else ("second" if x == 2 else "additional"))
+    )
+
 def clean_review_comments(team_folder):
     """Clean review-comments.csv files by extracting usernames from dict format."""
     review_comment_files = [f for f in team_folder.glob("*.csv") if f.name.endswith("_review-comments.csv")]
@@ -34,20 +72,6 @@ def clean_review_comments(team_folder):
         if "author" not in df.columns:
             print("[WARN] 'author' column not found — skipping.")
             continue
-
-        def extract_username(value):
-            """Extract username if cell looks like a dict, otherwise return original."""
-            if pd.isna(value):
-                return value
-            val = str(value).strip()
-            if val.startswith("{") and "username" in val:
-                try:
-                    parsed = ast.literal_eval(val)
-                    if isinstance(parsed, dict) and "username" in parsed:
-                        return parsed["username"]
-                except Exception:
-                    pass
-            return val
 
         before_sample = df["author"].head(3).tolist()
         df["author"] = df["author"].apply(extract_username)
@@ -118,20 +142,7 @@ def enrich_prs_and_comments(team_folder):
     print(f"[INFO] Filtered PRs: {prs_before} → {len(prs_df)}")
     print(f"[INFO] Filtered review comments: {review_before} → {len(review_comments_df)}")
 
-    def get_top_file_info(group):
-        file_sums = group.groupby("file_path")[["lines_added", "lines_deleted"]].sum()
-        file_sums["total_change"] = file_sums["lines_added"] + file_sums["lines_deleted"]
-        if file_sums.empty:
-            return pd.Series({"top_file": None, "top_file_change_%": None, "docs_updated": False})
-
-        top_file_row = file_sums.sort_values("total_change", ascending=False).iloc[0]
-        top_file = top_file_row.name
-        top_file_total_change = top_file_row["total_change"]
-        total_pr_change = file_sums["total_change"].sum()
-        top_file_change_pct = round((top_file_total_change / total_pr_change) * 100, 2) if total_pr_change > 0 else None
-        docs_updated = any("docs" in str(fp).lower() or "readme" in str(fp).lower() for fp in file_sums.index)
-        return pd.Series({"top_file": top_file, "top_file_change_%": top_file_change_pct, "docs_updated": docs_updated})
-
+    # --- FIX START: Handle MergeError on rerun ---
     # Drop existing enrichment columns before merge to avoid conflicts if the script is re-run
     enrichment_cols = ["top_file", "top_file_change_%", "docs_updated"]
     for col in enrichment_cols:
@@ -140,7 +151,7 @@ def enrich_prs_and_comments(team_folder):
             prs_df = prs_df.drop(columns=[col])
 
     print("[INFO] Calculating top file metrics per PR...")
-    top_file_info = commits_df.groupby("pr_id", group_keys=False).apply(get_top_file_info).reset_index()
+    top_file_info = commits_df.groupby("pr_id", group_keys=False).apply(get_top_file_info_single).reset_index()
     enriched_prs = prs_df.merge(top_file_info, on="pr_id", how="left")
 
     print("[INFO] Calculating order_of_review for review comments...")
@@ -149,12 +160,7 @@ def enrich_prs_and_comments(team_folder):
             raise KeyError("[ERROR] review-comments.csv is missing 'created_at' column.")
         review_comments_df["created_at"] = pd.to_datetime(review_comments_df["created_at"], errors="coerce")
         review_comments_df = review_comments_df.sort_values(["pr_id", "created_at"])
-        review_comments_df["order_of_review"] = (
-            review_comments_df.groupby("pr_id")["created_at"]
-            .rank(method="first")
-            .astype(int)
-            .apply(lambda x: "first" if x == 1 else ("second" if x == 2 else "additional"))
-        )
+        review_comments_df["order_of_review"] = calculate_order_of_review(review_comments_df)
 
     enriched_prs.to_csv(prs_path, index=False)
     review_comments_df.to_csv(review_comments_path, index=False)

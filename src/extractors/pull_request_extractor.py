@@ -2,6 +2,7 @@ import os
 import time
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from dotenv import load_dotenv
@@ -96,6 +97,10 @@ class PullRequestExtractor(GitExtractor):
             else:
                 print("[DEBUG] GITHUB_TOKEN loaded successfully")
             self.headers = {"Authorization": f"token {token}"} if token else {}
+        
+        # Initialize request session for connection pooling
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
 
     # ============================================================================
     # RATE LIMITING
@@ -275,7 +280,14 @@ class PullRequestExtractor(GitExtractor):
         if not response:
             return None
         
-        return response.json()
+        data = response.json()
+        if data.get("merged_by"):
+            data["merged_by_login"] = data["merged_by"].get("login")
+        else:
+            data["merged_by_login"] = None
+
+        return data
+
 
     def extract_all_pull_requests(
         self,
@@ -527,7 +539,7 @@ class PullRequestExtractor(GitExtractor):
 
     def extract_pr_all_comments(self, pr_id: int) -> Dict[str, List[Dict]]:
         """
-        Extract all types of comments for a pull request.
+        Extract all types of comments for a pull request using parallel requests.
         
         Args:
             pr_id: Pull request number
@@ -536,12 +548,34 @@ class PullRequestExtractor(GitExtractor):
             Dictionary with keys:
             - "review_comments": Inline code review comments
             - "issue_comments": General PR discussion comments
+            - "pr_reviews": Review submissions
         """
-        return {
-            "review_comments": self.extract_pr_review_comments(pr_id),
-            "issue_comments": self.extract_pr_issue_comments(pr_id),
-            "pr_reviews": self.extract_pr_reviews(pr_id)
+        # Prepare URLs for parallel fetching
+        urls = {
+            "review_comments": f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/pulls/{pr_id}/comments",
+            "issue_comments": f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/issues/{pr_id}/comments",
+            "pr_reviews": f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/pulls/{pr_id}/reviews"
         }
+        
+        results = {}
+        
+        # Fetch all three in parallel
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(self.make_request_with_backoff, url): key 
+                for key, url in urls.items()
+            }
+            
+            for future in as_completed(futures):
+                key = futures[future]
+                try:
+                    response = future.result()
+                    results[key] = response.json() if response else []
+                except Exception as e:
+                    print(f"[WARN] Error fetching {key} for PR #{pr_id}: {e}")
+                    results[key] = []
+        
+        return results
 
     def extract_pr_reviews(self, pr_id: int) -> List[Dict]:
         """
@@ -834,7 +868,7 @@ if __name__ == "__main__":
     print("\n[1] Extracting single PR...")
     pr_data = extractor.extract_pull_request_by_id(100)
     if pr_data:
-        print(f"    PR #{pr_data['number']}: {pr_data['title']}")
+        print(f"    PR #{pr_data['number']}: {pr_data['pr_title']}")
         print(f"    State: {pr_data['state']}")
         print(f"    Author: {pr_data['user']['login']}")
     
@@ -866,7 +900,7 @@ if __name__ == "__main__":
     # Example 6: Extract complete PR
     print("\n[6] Extracting complete PR data...")
     complete_pr = extractor.extract_pr_complete(100)
-    print(f"    PR: {complete_pr['pr_data']['title'] if complete_pr['pr_data'] else 'N/A'}")
+    print(f"    PR: {complete_pr['pr_data']['pr_title'] if complete_pr['pr_data'] else 'N/A'}")
     print(f"    Commits: {len(complete_pr['commits'])}")
     print(f"    Files: {len(complete_pr['files'])}")
     print(f"    Review comments: {len(complete_pr['review_comments'])}")
