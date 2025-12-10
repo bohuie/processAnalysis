@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import pandas as pd
 import re
@@ -6,13 +7,33 @@ import json
 import ast
 from pathlib import Path
 from tqdm import tqdm
-import ollama
 from datetime import datetime, timezone
+
+# Add parent directory to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
+
+# Import utilities from src/utils
+from src.utils.ollama_offline import connect_ollama_offline
+from src.utils.label_merge import label_merge_state
+from src.utils.normalize_pr_id import normalize_pr_ids
+from src.utils.anonymize_data import anonymize_username
+from src.utils.anonymize_columns import (
+    anonymize_author_columns,
+    anonymize_column,
+    anonymize_branch_names,
+)
+from src.utils.enrich_columns import (
+    update_top_file_metrics,
+    update_docs_updated_flag,
+    update_order_of_review,
+)
 
 # === SETUP ============================================================
 MODEL_NAME = "llama3.2:3b"
 RUN_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
 ANONYMIZE = True
+
+ask_llm = connect_ollama_offline
 
 # === FILE ENRICHMENT AND CLEANING =====================================
 def extract_username(value):
@@ -257,28 +278,6 @@ def anonymize_branch_names(series: pd.Series, mapping: dict) -> pd.Series:
         s = s.str.replace(pattern, anon, regex=True)
     return s
 
-# === OLLAMA HELPER ====================================================
-def ask_ollama(prompt: str) -> str:
-    """Send a text classification prompt to Ollama running locally."""
-    while True:
-        try:
-            response = ollama.chat(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": "You are a concise text classifier."},
-                    {"role": "user", "content": prompt}
-                ],
-                options={
-                    "temperature": 0.2,
-                    "num_predict": 200,
-                }
-            )
-            return response['message']['content'].strip()
-        except Exception as e:
-            err = str(e)
-            print(f"Ollama error: {err} — retrying in 3 seconds...")
-            time.sleep(3)
-
 # === BRANCHING LABELING FUNCTIONS ======================================
 def label_features_per_branch(prs_df):
     """Label: one, multiple - Counts how many features (PRs) were created per branch."""
@@ -335,7 +334,7 @@ def assess_branch_meaningfulness(branch_name, pr_title, pr_description):
         - Confidence should be lower (50-79) when there's some ambiguity.
         - Confidence should be very low (0-49) only when you're very uncertain.
     """
-    llm_output = ask_ollama(prompt).strip()
+    llm_output = ask_llm(prompt).strip()
     
     # Parse the response to extract reason, prediction, and confidence
     reason = ""
