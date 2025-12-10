@@ -145,6 +145,7 @@ for TEAM_FOLDER in team_folders:
     print(f"[INFO] Output will be saved as: {OUTPUT_PATH}")
 
     # === LOAD CACHE ===================================================
+    # Helpful for re-running scripts without re-querying LLM for known commit messages
     if os.path.exists(CACHE_PATH):
         cache_df = pd.read_csv(CACHE_PATH)
         cache = dict(zip(cache_df["commit_message"], cache_df["event"]))
@@ -153,6 +154,7 @@ for TEAM_FOLDER in team_folders:
         cache = {}
 
     # === LLM CALLER ===================================================
+    # Call utility file
     def ask_groq(prompt, max_tokens=200):
         while True:
             try:
@@ -237,7 +239,7 @@ for TEAM_FOLDER in team_folders:
     commits_df["created_at"] = commits_df["pr_id"].map(pr_time_lookup)
 
     # === STEP 2: PR LABELS ===========================================
-    def label_pr(row):
+    def label_pr(row): # --> rename function as "label_feature_doc" in communication
         """Label each PR based on merge status and documentation."""
         if pd.isna(row.get("merged_at")):
             return "no_merge"
