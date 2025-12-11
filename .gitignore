@@ -19,3 +19,5 @@ data/*/
 
 # Virtual Environment files
 venv/
+
+confidential/
