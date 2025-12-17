@@ -20,8 +20,7 @@ def label_review_constructiveness(
     """
     Enrich reviews_df with:
       - changes_requested
-      - approved_without_review
-      - review_resolved / review_unresolved
+      - approved_empty_review
       - constructive_* / non_constructive_* labels
 
     All of these are applied ONLY to rows where comment_type == 'review'.
@@ -98,7 +97,7 @@ def label_review_constructiveness(
                 "changes_requested"
             )
 
-        # --- (B) approved_without_review (single empty APPROVED review) ---
+        # --- (B) approved_empty_review (single empty APPROVED review) ---
         if len(review_rows) == 1:
             idx = review_idx[0]
             state_up = review_states_upper.iloc[0]
@@ -106,43 +105,7 @@ def label_review_constructiveness(
             if state_up == "APPROVED" and body == "":
                 reviews_df.at[idx, "event"] = append_event(
                     reviews_df.at[idx, "event"],
-                    "approved_without_review"
-                )
-
-        # --- (C) review_resolved / review_unresolved ----------------------
-        cr_indices = list(review_idx[cr_mask])
-        approved_mask = review_states_upper.eq("APPROVED")
-        approved_indices = list(review_idx[approved_mask])
-
-        if cr_indices:
-            changes_rows = review_rows[cr_mask].sort_values("created_at")
-            last_change_idx = changes_rows.index[-1]
-            last_change_time = changes_rows["created_at"].iloc[-1]
-
-            if approved_indices:
-                approved_rows = review_rows[approved_mask].sort_values("created_at")
-
-                # label review_resolved on APPROVED rows that have earlier CHANGES_REQUESTED
-                any_change_before = changes_rows["created_at"].min()
-                for idx in approved_rows.index:
-                    if any_change_before < review_rows.loc[idx, "created_at"]:
-                        reviews_df.at[idx, "event"] = append_event(
-                            reviews_df.at[idx, "event"],
-                            "review_resolved"
-                        )
-
-                # review_unresolved if last CHANGES_REQUESTED has no later APPROVED
-                any_approved_after = (approved_rows["created_at"] > last_change_time).any()
-                if not any_approved_after:
-                    reviews_df.at[last_change_idx, "event"] = append_event(
-                        reviews_df.at[last_change_idx, "event"],
-                        "review_unresolved"
-                    )
-            else:
-                # no APPROVED at all -> last CHANGES_REQUESTED is unresolved
-                reviews_df.at[last_change_idx, "event"] = append_event(
-                    reviews_df.at[last_change_idx, "event"],
-                    "review_unresolved"
+                    "approved_empty_review"
                 )
 
         # --- (D) Constructiveness classification (only for review rows) ---

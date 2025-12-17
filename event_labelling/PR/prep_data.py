@@ -1,3 +1,5 @@
+import os
+from typing import Tuple
 import pandas as pd
 from src.utils.anonymize_columns import (
     anonymize_author_columns,)
@@ -56,13 +58,26 @@ def _apply_review_specific_filters(raw_reviews_df: pd.DataFrame, team_name: str)
     return raw_reviews_df
 
 
+def _clean_path(original_path: str) -> str:
+    """
+    Turn /path/to/foo.csv into /path/to/CLEAN_foo.csv
+    """
+    folder = os.path.dirname(original_path)
+    base = os.path.basename(original_path)
+    return os.path.join(folder, f"CLEAN_{base}")
+
+
 def preprocess_team_csvs(
     team_folder: str,
     team_name: str,
     prs_path: str,
     commits_path: str,
     reviews_path: str,
-) -> None:
+) -> Tuple[str, str, str]:
+    """
+    Preprocess originals but DO NOT overwrite them.
+    Write CLEAN_*.csv files and return their paths.
+    """
     print("[STEP -1A] Loading raw CSVs for preprocessing...")
     raw_prs_df = pd.read_csv(prs_path)
     raw_commits_df = pd.read_csv(commits_path)
@@ -73,37 +88,41 @@ def preprocess_team_csvs(
     raw_commits_df = drop_bots_in_author_like_columns(raw_commits_df, f"{team_name} Commits")
     raw_reviews_df = drop_bots_in_author_like_columns(raw_reviews_df, f"{team_name} Reviews")
 
-    # 2) Remove rows mentioning logs/log
+    # 2) Remove log-ish rows
     raw_prs_df = drop_log_rows(raw_prs_df, f"{team_name} PRs")
     raw_commits_df = drop_log_rows(raw_commits_df, f"{team_name} Commits")
     raw_reviews_df = drop_log_rows(raw_reviews_df, f"{team_name} Reviews")
 
-    # 3) Review-specific filters BEFORE order_of_review
+    # 3) Review-specific filters
     raw_reviews_df = _apply_review_specific_filters(raw_reviews_df, team_name)
 
-    # 4) Overwrite the CSVs with cleaned (still de-anonymized) data
-    raw_prs_df.to_csv(prs_path, index=False)
-    raw_commits_df.to_csv(commits_path, index=False)
-    raw_reviews_df.to_csv(reviews_path, index=False)
+    # 4) Write CLEAN files (NOT overwriting originals)
+    clean_prs_path = _clean_path(prs_path)
+    clean_commits_path = _clean_path(commits_path)
+    clean_reviews_path = _clean_path(reviews_path)
 
-    # 5) Add order_of_review to review comments (reviewer-based logic)
-    print("[STEP -1F] Adding order_of_review to review-comments via enrichment utility...")
+    raw_prs_df.to_csv(clean_prs_path, index=False)
+    raw_commits_df.to_csv(clean_commits_path, index=False)
+    raw_reviews_df.to_csv(clean_reviews_path, index=False)
+
+    # 5) Add order_of_review to the CLEAN review-comments
+    print("[STEP -1F] Adding order_of_review to CLEAN review-comments...")
     add_order_of_review(team_folder)
 
-    # 6) Reload CSVs (now including order_of_review in reviews)
-    print("[STEP -1G] Anonymizing author columns on disk...")
-    prs_df = pd.read_csv(prs_path)
-    commits_df = pd.read_csv(commits_path)
-    reviews_df = pd.read_csv(reviews_path)
+    # 6) Reload CLEAN CSVs (now containing order_of_review)
+    print("[STEP -1G] Anonymizing author columns on CLEAN CSVs...")
+    prs_df = pd.read_csv(clean_prs_path)
+    commits_df = pd.read_csv(clean_commits_path)
+    reviews_df = pd.read_csv(clean_reviews_path)
 
-    # Pass actual DataFrames, not paths
     anonymize_author_columns([
         ("prs", prs_df),
         ("commits", commits_df),
         ("reviews", reviews_df),
     ])
 
-    # 7) Save anonymized versions back to disk
-    prs_df.to_csv(prs_path, index=False)
-    commits_df.to_csv(commits_path, index=False)
-    reviews_df.to_csv(reviews_path, index=False)
+    prs_df.to_csv(clean_prs_path, index=False)
+    commits_df.to_csv(clean_commits_path, index=False)
+    reviews_df.to_csv(clean_reviews_path, index=False)
+
+    return clean_prs_path, clean_commits_path, clean_reviews_path

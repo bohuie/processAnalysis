@@ -49,7 +49,7 @@ PR_LABELS = {
             "self_merge", "reviewed_merge", "no_merge",
             "constructive_first_review", "constructive_second_review", "constructive_additional_review",
             "non_constructive_first_review", "non_constructive_second_review", "non_constructive_additional_review",
-            "pr_description_clear", "pr_description_unclear", "changes_requested", "approved_without_review", "review_resolved", "review_unresolved"
+            "pr_description_clear", "pr_description_unclear", "changes_requested", "approved_empty_review"
 }
 
 
@@ -116,7 +116,7 @@ def process_all_teams() -> None:
         print(f"[INFO] Output will be saved as: {OUTPUT_PATH}")
         
         # === PREPROCESS RAW CSVs (bots, logs, review filters, order_of_review, anonymize) ===
-        preprocess_team_csvs(
+        clean_prs_path, clean_commits_path, clean_reviews_path = preprocess_team_csvs(
             team_folder=TEAM_FOLDER,
             team_name=team_name,
             prs_path=PRS_PATH,
@@ -126,10 +126,10 @@ def process_all_teams() -> None:
 
         # === LOAD CSVs (already preprocessed) =========================
         print("[INFO] Loading CSVs with parsed timestamps...")
-        prs_df = pd.read_csv(PRS_PATH, parse_dates=["created_at"])
-        commits_df = pd.read_csv(COMMITS_PATH)
-        reviews_df = pd.read_csv(REVIEWS_PATH, parse_dates=["created_at"])
-        print(f"[OK] PRs: {len(prs_df)} | Commits: {len(commits_df)} | Reviews: {len(reviews_df)}")
+        prs_df = pd.read_csv(clean_prs_path, parse_dates=["created_at"])
+        commits_df = pd.read_csv(clean_commits_path)
+        reviews_df = pd.read_csv(clean_reviews_path, parse_dates=["created_at"])
+        print(f"[OK] CLEAN PRs: {len(prs_df)} | CLEAN Commits: {len(commits_df)} | CLEAN Reviews: {len(reviews_df)}")
 
         # === Normalize PR IDs ========================================
         named_dfs = [
