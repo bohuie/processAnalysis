@@ -200,12 +200,23 @@ def add_order_of_review(team_folder: Union[Path, str]) -> None:
     print(f"{'=' * 70}")
 
     all_csvs = list(team_folder.glob("*.csv"))
-    commits_path = next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
-    review_comments_path = next((f for f in all_csvs if f.name.endswith("_review-comments.csv")), None)
+
+    commits_path = next(
+        (f for f in all_csvs
+        if f.name.startswith("CLEAN_") and f.name.endswith("_PR_commits.csv")),
+        None
+    )
+
+    review_comments_path = next(
+        (f for f in all_csvs
+        if f.name.startswith("CLEAN_") and f.name.endswith("_review-comments.csv")),
+        None
+    )
 
     if not all([commits_path, review_comments_path]):
-        print(f"[WARN] Missing commits or review-comments CSV for {team_name}, skipping order_of_review.")
+        print(f"[WARN] Missing CLEAN commits or CLEAN review-comments CSV for {team_name}, skipping order_of_review.")
         return
+
 
     print("[INFO] Loading commits and review comments...")
     commits_df = pd.read_csv(commits_path)
