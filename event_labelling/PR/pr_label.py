@@ -2,9 +2,9 @@ import os
 import glob
 import pandas as pd
 import numpy as np
-from tqdm import tqdm
 from dotenv import load_dotenv
 from datetime import datetime
+from event_labelling.PR.get_clean_pr_label import create_clean_pr_label_csv
 
 # utility imports
 from src.utils.normalize_pr_id import normalize_pr_ids
@@ -236,6 +236,9 @@ def process_all_teams() -> None:
         if not pr_df.empty:
             pr_df.to_csv(PR_OUTPUT_PATH, index=False)
             print(f"[OK] PR labels saved → {PR_OUTPUT_PATH} ({len(pr_df)} rows)")
+
+            create_clean_pr_label_csv(PR_OUTPUT_PATH)
+
         else:
             print("[WARN] No PR labels found to save.")
 
