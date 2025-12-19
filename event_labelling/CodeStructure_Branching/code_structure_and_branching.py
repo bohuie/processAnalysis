@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # Import utilities from src/utils
 from src.utils.ollama_offline import connect_ollama_offline
 from src.utils.label_merge import label_merge_state
-from src.utils.anonymize_data import anonymize_username
+# anonymization utilities load their own mapping when needed
 from src.utils.anonymize_columns import (
     anonymize_column,
     anonymize_branch_names,
@@ -143,24 +143,10 @@ def create_branch_struct(prs_df):
     return branch_mapping
 
 # === ANONYMIZATION ====================================================
-def load_anonymization_mapping():
-    """Load anonymization mapping from JSON file."""
-    mapping_path = "../confidential/anonymized_usernames.json"
-    if os.path.exists(mapping_path):
-        try:
-            with open(mapping_path, 'r') as f:
-                mapping = json.load(f)
-            print(f"Loaded anonymization mapping from {mapping_path}")
-            return mapping
-        except Exception as e:
-            print(f"Failed to load anonymization mapping: {e}")
-            return {}
-    else:
-        print(f"Anonymization mapping file not found: {mapping_path}")
-        print("   Please create a JSON file with real_name -> anonymized_name mapping")
-        return {}
-
-name_map = load_anonymization_mapping()
+# NOTE: anonymization helpers in `src.utils.anonymize_columns` load the
+# anonymized mapping from the canonical location when called without an
+# explicit `mapping` argument. We avoid loading a mapping at import time so
+# that newly-created mappings are picked up during a run.
 
 def anonymize_column(series: pd.Series, mapping: dict) -> pd.Series:
     """Replace exact matches or substrings based on mapping (case-insensitive)."""
@@ -341,7 +327,8 @@ def label_branch_names(prs_df):
             "pr_count": len(pr_list)
         }
 
-    for branch_name in tqdm(unique_branches, desc="  Branch naming"):
+    # Iterate only branches that actually have PRs (branch_mapping keys).
+    for branch_name in tqdm(list(branch_mapping.keys()), desc="  Branch naming"):
         if branch_name.lower() in ["main", "master"]:
             if branch_name in branch_mapping:
                 for pr_info in branch_mapping[branch_name]:
@@ -369,9 +356,17 @@ def label_branch_names(prs_df):
         if pr_descriptions:
             all_pr_context += f"PR Descriptions:\n" + "\n".join(f"  - {desc}" for desc in pr_descriptions) + "\n"
 
-        name_label, reason, confidence_score, llm_raw = assess_branch_meaningfulness(
-            branch_name, all_pr_context, ""
-        )
+        try:
+            name_label, reason, confidence_score, llm_raw = assess_branch_meaningfulness(
+                branch_name, all_pr_context, ""
+            )
+        except Exception as e:
+            # Fallback when LLM call fails — mark as random with medium confidence
+            print(f"[WARN] LLM assessment failed for branch '{branch_name}': {e}")
+            name_label = "Random Branch Name"
+            reason = f"LLM error: {e}"
+            confidence_score = 50
+            llm_raw = f"[ERROR] LLM unavailable: {e}"
         
         if branch_name in branch_mapping:
             for pr_info in branch_mapping[branch_name]:
@@ -408,52 +403,49 @@ def label_branch_names(prs_df):
 
 # === FEATURE SIZE LABELING ============================================
 def label_feature_size(commits_df, prs_df, pr_created_at_lookup):
-    """Label: small, large - Features calculated PER COMMIT based on net new lines added."""
+    """Label: small, large - Features calculated PER FILE.
+
+    For each file-row in `commits_df` (expected to be the commit_file_changes CSV),
+    classify the file as a Feature if it has additions and no deletions, and
+    leave refactor classification to `label_refactor_size` which marks files with
+    any deletions as refactors. This function therefore emits one row per file
+    where deletions == 0 and additions > 0.
+    """
     result_rows = []
-    
-    for commit_sha, commit_group in commits_df.groupby("commit_sha"):
-        if len(commit_group) == 0:
+
+    # Iterate file-level rows directly so labels are per-file (not aggregated per commit)
+    for _, file_row in commits_df.iterrows():
+        pr_id = file_row.get("pr_id")
+        commit_sha = file_row.get("commit_sha")
+        filename = file_row.get("file_path", "unknown")
+
+        additions = int(file_row.get("lines_added", 0) or 0)
+        deletions = int(file_row.get("lines_deleted", 0) or 0)
+
+        # Only consider pure-addition files as features (no deletions)
+        if deletions != 0 or additions == 0:
             continue
-            
-        first_row = commit_group.iloc[0]
-        pr_id = first_row.get("pr_id")
-        
+
         pr_info = prs_df[prs_df["pr_id"] == pr_id]
         if pr_info.empty:
             continue
         pr_info = pr_info.iloc[0]
-        
-        if "file_path" in commit_group.columns and commit_group["file_path"].notna().any():
-            total_feature_lines = 0
-            for _, file_row in commit_group.iterrows():
-                if pd.isna(file_row.get("file_path")):
-                    continue
-                additions = file_row.get("lines_added", 0)
-                deletions = file_row.get("lines_deleted", 0)
-                
-                if additions > deletions:
-                    pure_additions = additions - deletions
-                    total_feature_lines += pure_additions
-        else:
-            total_feature_lines = 0
-        
-        if total_feature_lines == 0:
-            continue
-        
-        event = "Small Feature Size" if total_feature_lines < 50 else "Large Feature Size"
+
+        event = "Small Feature Size" if additions < 50 else "Large Feature Size"
         created_at = pr_created_at_lookup.get(pr_id)
-        
+
         result_rows.append({
             "pr_id": pr_id,
-            "pr_author": pr_info["pr_author"],
+            "pr_author": pr_info.get("pr_author"),
             "created_at": created_at,
             "commit_sha": commit_sha,
+            "filename": filename,
             "event": event,
             "main_label": "Feature Size",
-            "llm_output": f"rule-based: {total_feature_lines} feature lines (per commit)",
+            "llm_output": f"rule-based: {additions} additions in {filename}",
             "llm_timestamp": RUN_TIMESTAMP
         })
-    
+
     return pd.DataFrame(result_rows) if result_rows else pd.DataFrame()
 
 # === REFACTOR SIZE LABELING ===========================================
@@ -466,30 +458,36 @@ def label_refactor_size(commits_df, prs_df, pr_created_at_lookup):
         print("    [INFO] Make sure you're loading '*_commit_file_changes.csv'")
         print("    [INFO] Skipping refactor analysis.")
         return pd.DataFrame()
-    
+
+    # Iterate per-file and mark as refactor if there are any deletions (regardless of additions)
     for _, row in commits_df.iterrows():
         pr_id = row.get("pr_id")
         commit_sha = row.get("commit_sha")
         filename = row.get("file_path", "unknown")
-        
-        additions = row.get("lines_added", 0)
-        deletions = row.get("lines_deleted", 0)
-        
+
+        additions = int(row.get("lines_added", 0) or 0)
+        deletions = int(row.get("lines_deleted", 0) or 0)
+
+        # Only consider files where at least one line was changed
         if additions == 0 and deletions == 0:
             continue
-        
+
+        # If there are no deletions, this is not a refactor (feature-only case handled elsewhere)
+        if deletions == 0:
+            continue
+
         pr_info = prs_df[prs_df["pr_id"] == pr_id]
         if pr_info.empty:
             continue
         pr_info = pr_info.iloc[0]
-        
+
         refactor_lines = deletions + additions
         event = "Small Refactor Size" if refactor_lines < 50 else "Large Refactor Size"
         created_at = pr_created_at_lookup.get(pr_id)
-        
+
         result_rows.append({
             "pr_id": pr_id,
-            "pr_author": pr_info["pr_author"],
+            "pr_author": pr_info.get("pr_author"),
             "created_at": created_at,
             "commit_sha": commit_sha,
             "filename": filename,
@@ -498,7 +496,7 @@ def label_refactor_size(commits_df, prs_df, pr_created_at_lookup):
             "llm_output": f"rule-based: {refactor_lines} lines modified ({deletions}D+{additions}A) in {filename}",
             "llm_timestamp": RUN_TIMESTAMP
         })
-    
+
     return pd.DataFrame(result_rows) if result_rows else pd.DataFrame()
 
 # === REPOSITORY STATUS LABELING =======================================
@@ -569,12 +567,15 @@ def label_pr_status(prs_df):
         if state == "open":
             event = "still_open"
             llm_output = "rule-based: currently open"
+        elif state == "closed" and merged_at is not None and pd.notna(merged_at) and merged_at != "":
+            event = "merged"
+            llm_output = "rule-based: closed and merged"
         elif state == "closed":
             event = "closed"
             llm_output = "rule-based: closed without merge"
         else:
-            event = "closed"
-            llm_output = f"rule-based: unknown state '{state}', treating as closed"
+            event = "unknown"
+            llm_output = f"rule-based: unknown state '{state}', treating as unknown"
         
         result_rows.append({
             "pr_id": pr_id,
@@ -593,12 +594,16 @@ def label_pr_status(prs_df):
 
 def diagnose_timestamp_issues(df):
     """Check for timestamp issues in the final dataframe."""
+    if "created_at" not in df.columns:
+        print("[WARN] 'created_at' column not present in dataframe — skipping timestamp diagnostics")
+        return
+
     missing = df["created_at"].isna().sum()
     total = len(df)
-    
+
     if missing > 0:
         print(f"\nWARNING: {missing}/{total} events have missing timestamps")
-        
+
         missing_df = df[df["created_at"].isna()][["pr_id", "pr_author", "main_label", "event"]].head(10)
         if not missing_df.empty:
             print("  Examples of events with missing timestamps:")
@@ -706,14 +711,15 @@ def process_all_teams():
         print(f"[INFO] After filtering - PRs: {len(prs_df)}, Commits: {len(commits_df)}, File Changes: {len(commit_file_changes_df)}")
         
         # 2. Anonymization (if enabled)
-        if ANONYMIZE and name_map:
-            print("[INFO] Applying anonymization...")
+        if ANONYMIZE:
+            print("[INFO] Applying anonymization (dynamic mapping load)")
             for col in ["pr_author", "merged_by", "head_branch"]:
                 if col in prs_df.columns:
                     if col == "head_branch":
-                        prs_df[col] = anonymize_branch_names(prs_df[col], name_map)
+                        # anonymize_branch_names will load the mapping if none provided
+                        prs_df[col] = anonymize_branch_names(prs_df[col])
                     else:
-                        prs_df[col] = anonymize_column(prs_df[col], name_map)
+                        prs_df[col] = anonymize_column(prs_df[col])
         
         # 3. Create timestamp lookup for PR creation times
         pr_created_at_lookup = {}
@@ -752,13 +758,20 @@ def process_all_teams():
         features_per_branch_df = label_features_per_branch(prs_df)
         all_labels_dfs.append(features_per_branch_df)
 
-        # 3. Feature Size (Small/Large) - Per Commit
-        feature_size_df = label_feature_size(commit_file_changes_df, prs_df, pr_created_at_lookup)
-        all_labels_dfs.append(feature_size_df)
+        # 3/4. Feature & Refactor Size (Per file)
+        required_file_cols = {"file_path", "lines_added", "lines_deleted", "pr_id", "commit_sha"}
+        missing_cols = required_file_cols - set(commit_file_changes_df.columns)
+        if missing_cols:
+            print(f"[WARN] commit_file_changes CSV missing required columns for per-file size labels: {sorted(missing_cols)}")
+            print("[INFO] Skipping Feature Size and Refactor Size labeling for this team.")
+        else:
+            # Feature Size: files with additions and no deletions
+            feature_size_df = label_feature_size(commit_file_changes_df, prs_df, pr_created_at_lookup)
+            all_labels_dfs.append(feature_size_df)
 
-        # 4. Refactor Size (Small/Large) - Per File in Commit
-        refactor_size_df = label_refactor_size(commit_file_changes_df, prs_df, pr_created_at_lookup)
-        all_labels_dfs.append(refactor_size_df)
+            # Refactor Size: files with any deletions
+            refactor_size_df = label_refactor_size(commit_file_changes_df, prs_df, pr_created_at_lookup)
+            all_labels_dfs.append(refactor_size_df)
         
         # 5. Repository Status (up-to-date/outdated)
         repo_status_df = label_repo_status(prs_df)
