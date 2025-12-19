@@ -16,8 +16,10 @@ __pycache__/
 
 # Data
 data/*/
+data/*
 
 # Virtual Environment files
 venv/
 
+# Ignore specific files
 confidential/
