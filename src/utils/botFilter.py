@@ -33,6 +33,7 @@ DEFAULT_BOT_PATTERNS = [
     r'codecov',               # Codecov bot
     r'snyk-bot',              # Snyk security bot
     r'github-classroom',      # GitHub Classroom bot
+    'actions-user',          # Generic GitHub Actions user
     r'allcontributors',       # All Contributors bot
     r'semantic-release-bot', # Semantic Release bot
     r'mergify',               # Mergify bot
