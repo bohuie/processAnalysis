@@ -176,14 +176,21 @@ def add_docs_updated_flag(team_folder: Union[Path, str]) -> None:
     print(f"[INFO] Final PR count: {len(enriched_prs)}")
 
 
+
 def add_order_of_review(team_folder: Union[Path, str]) -> None:
     """
     Add 'order_of_review' to *_review-comments.csv.
 
+    NEW LOGIC (reviewer-based):
     - Loads *_PR_commits.csv and *_review-comments.csv from team_folder
-    - Normalizes review comment timestamps to UTC Z string
     - Filters comments to only PRs that appear in commits
-    - For each PR, assigns 'first', 'second', 'additional' based on created_at order
+    - For each PR:
+        * Sort comments by created_at
+        * Determine the order of distinct reviewers (using 'author' column):
+              1st unique reviewer  -> 'first'
+              2nd unique reviewer  -> 'second'
+              3rd+ unique reviewers -> 'additional'
+        * All comments from the same reviewer on that PR get the same tag
     - Overwrites the review-comments CSV
     """
     team_folder = Path(team_folder)
@@ -193,12 +200,23 @@ def add_order_of_review(team_folder: Union[Path, str]) -> None:
     print(f"{'=' * 70}")
 
     all_csvs = list(team_folder.glob("*.csv"))
-    commits_path = next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
-    review_comments_path = next((f for f in all_csvs if f.name.endswith("_review-comments.csv")), None)
+
+    commits_path = next(
+        (f for f in all_csvs
+        if f.name.startswith("CLEAN_") and f.name.endswith("_PR_commits.csv")),
+        None
+    )
+
+    review_comments_path = next(
+        (f for f in all_csvs
+        if f.name.startswith("CLEAN_") and f.name.endswith("_review-comments.csv")),
+        None
+    )
 
     if not all([commits_path, review_comments_path]):
-        print(f"[WARN] Missing commits or review-comments CSV for {team_name}, skipping order_of_review.")
+        print(f"[WARN] Missing CLEAN commits or CLEAN review-comments CSV for {team_name}, skipping order_of_review.")
         return
+
 
     print("[INFO] Loading commits and review comments...")
     commits_df = pd.read_csv(commits_path)
@@ -206,7 +224,11 @@ def add_order_of_review(team_folder: Union[Path, str]) -> None:
     print(f"[INFO] Commits loaded: {len(commits_df)}, Comments loaded: {len(review_comments_df)}")
 
     # Filter comments to PRs that have commits
-    _, review_comments_df = _filter_by_valid_pr_ids(commits_df, pd.DataFrame({"pr_id": commits_df["pr_id"].dropna().unique()}), review_comments_df)
+    _, review_comments_df = _filter_by_valid_pr_ids(
+        commits_df,
+        pd.DataFrame({"pr_id": commits_df["pr_id"].dropna().unique()}),
+        review_comments_df,
+    )
 
     if review_comments_df.empty:
         print("[INFO] No review comments left after filtering; nothing to label.")
@@ -216,25 +238,54 @@ def add_order_of_review(team_folder: Union[Path, str]) -> None:
 
     if "created_at" not in review_comments_df.columns:
         raise KeyError("[ERROR] review-comments.csv is missing 'created_at' column.")
+    if "author" not in review_comments_df.columns:
+        raise KeyError("[ERROR] review-comments.csv is missing 'author' column for reviewer usernames.")
 
-    print("[INFO] Calculating order_of_review for review comments...")
+    print("[INFO] Calculating reviewer-based order_of_review for review comments...")
     review_comments_df["created_at"] = pd.to_datetime(review_comments_df["created_at"], errors="coerce")
+
+    # Sort globally so within each PR group, time order is respected
     review_comments_df = review_comments_df.sort_values(["pr_id", "created_at"])
 
-    review_comments_df["order_of_review"] = (
-        review_comments_df.groupby("pr_id")["created_at"]
-        .rank(method="first")
-        .astype("Int64")
-        .apply(
-            lambda x: (
-                "first" if x == 1
-                else "second" if x == 2
-                else "additional"
-            )
-            if pd.notna(x) else None
-        )
+    review_comments_df = (
+        review_comments_df
+        .groupby("pr_id", group_keys=False)
+        .apply(_assign_order_for_pr)
     )
 
     review_comments_df.to_csv(review_comments_path, index=False)
-    print(f"[SUCCESS] Updated review comments with order_of_review saved to: {review_comments_path}")
+    print(f"[SUCCESS] Updated review comments with reviewer-based order_of_review saved to: {review_comments_path}")
     print(f"[INFO] Final comments count: {len(review_comments_df)}")
+    
+    
+    
+def _assign_order_for_pr(group: pd.DataFrame) -> pd.DataFrame:
+    """
+    For a single PR:
+    - Determine unique reviewers (author) in chronological order.
+    - Map first reviewer -> 'first', second -> 'second', rest -> 'additional'.
+    - Assign that label to all comments of that reviewer on this PR.
+    """
+    # Normalize author strings
+    authors = group["author"].astype(str).fillna("").str.strip()
+
+    # Unique reviewers in order of appearance
+    unique_reviewers = []
+    for a in authors:
+        if a and a not in unique_reviewers:
+            unique_reviewers.append(a)
+
+    # Build mapping reviewer -> tag
+    reviewer_to_tag = {}
+    for idx, reviewer in enumerate(unique_reviewers):
+        if idx == 0:
+            reviewer_to_tag[reviewer] = "first"
+        elif idx == 1:
+            reviewer_to_tag[reviewer] = "second"
+        else:
+            reviewer_to_tag[reviewer] = "additional"
+
+    group["order_of_review"] = authors.apply(
+        lambda a: reviewer_to_tag.get(a, None) if a else None
+    )
+    return group
