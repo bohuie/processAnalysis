@@ -20,3 +20,8 @@ data/*
 
 # Virtual Environment files
 venv/
+
+# Ignore specific files
+confidential/
+.DS_Store
+**/.DS_Store
