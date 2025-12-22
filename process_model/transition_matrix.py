@@ -5,21 +5,59 @@ import ast
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-DATA_FOLDER = os.path.join(ROOT, "data", "csv")
+
+# ============================================================
+# CONFIGURATION SWITCH - Choose which files to process
+# ============================================================
+# Set to "branching" or "pr_labels"
+FILE_SOURCE = "branching"  # or "pr_labels"
+# ============================================================
+
+# Configuration for branching_and_structure files
+BRANCHING_CONFIG = {
+    "data_folder": os.path.join(ROOT, "data", "graph_labels", "clean"),
+    "prefix": "CLEAN_year-long-project-team-",
+    "pattern": "*_labels_branching_and_structure.csv",
+    "regex": re.compile(r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$", re.IGNORECASE),
+    "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv"
+}
+
+# Configuration for pr_labels files
+PR_LABELS_CONFIG = {
+    "data_folder": os.path.join(ROOT, "data", "csv"),
+    "prefix": "CLEAN_pr_labels_",
+    "pattern": "year-long-project-team-*.csv",
+    "regex": re.compile(r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$", re.IGNORECASE),
+    "example": "CLEAN_pr_labels_year-long-project-team-7.csv"
+}
+
+# Select active configuration
+if FILE_SOURCE == "branching":
+    CONFIG = BRANCHING_CONFIG
+    print("[CONFIG] Using branching_and_structure files from data/graph_labels/clean/")
+elif FILE_SOURCE == "pr_labels":
+    CONFIG = PR_LABELS_CONFIG
+    print("[CONFIG] Using pr_labels files from data/csv/")
+else:
+    raise ValueError(f"Invalid FILE_SOURCE: {FILE_SOURCE}. Must be 'branching' or 'pr_labels'")
+
+DATA_FOLDER = CONFIG["data_folder"]
+CLEAN_PREFIX = CONFIG["prefix"]
+TEAM_RE = CONFIG["regex"]
 
 OUT_FOLDER = os.path.join(ROOT, "data", "outputs", "pr")
 os.makedirs(OUT_FOLDER, exist_ok=True)
 
-CLEAN_PREFIX = "CLEAN_pr_labels_"
-TEAM_RE = re.compile(r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$", re.IGNORECASE)
-
 def discover_clean_team_files() -> list[str]:
-    hits = glob.glob(os.path.join(DATA_FOLDER, f"{CLEAN_PREFIX}year-long-project-team-*.csv"))
+    search_pattern = os.path.join(DATA_FOLDER, f"{CLEAN_PREFIX}{CONFIG['pattern']}")
+    hits = glob.glob(search_pattern)
     files = sorted(set(hits))
     if not files:
         raise FileNotFoundError(
-            f"No CLEAN PR label CSVs found. Expected e.g.\n"
-            f"  {os.path.join(DATA_FOLDER, 'CLEAN_pr_labels_year-long-project-team-7.csv')}"
+            f"No CLEAN label CSVs found in {DATA_FOLDER}\n"
+            f"Expected e.g.: {os.path.join(DATA_FOLDER, CONFIG['example'])}\n"
+            f"Current FILE_SOURCE setting: '{FILE_SOURCE}'\n"
+            f"Change FILE_SOURCE in the script to switch between 'branching' and 'pr_labels'"
         )
     return files
 
@@ -205,4 +243,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
