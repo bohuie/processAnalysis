@@ -44,55 +44,7 @@ ANONYMIZE = True
 
 ask_llm = connect_ollama_offline
 
-# === FILE ENRICHMENT AND CLEANING =====================================
-def extract_username(value):
-    """Extract username if cell looks like a dict, otherwise return original."""
-    if pd.isna(value):
-        return value
-    val = str(value).strip()
-    if val.startswith("{") and "username" in val:
-        try:
-            parsed = ast.literal_eval(val)
-            if isinstance(parsed, dict) and "username" in parsed:
-                return parsed["username"]
-        except Exception:
-            pass
-    return val
-
-def clean_review_comments(team_folder):
-    """Clean review-comments.csv files by extracting usernames from dict format."""
-    review_comment_files = [f for f in team_folder.glob("*.csv") if f.name.endswith("_review-comments.csv")]
-    if not review_comment_files:
-        print(f"[WARN] No review-comments.csv found in {team_folder}")
-        return
-
-    for file_path in review_comment_files:
-        print(f"\n[INFO] Cleaning: {file_path}")
-
-        try:
-            df = pd.read_csv(file_path)
-        except Exception as e:
-            print(f"[ERROR] Failed to read {file_path}: {e}")
-            continue
-
-        if "author" not in df.columns:
-            print("[WARN] 'author' column not found — skipping.")
-            continue
-
-        before_sample = df["author"].head(3).tolist()
-        df["author"] = df["author"].apply(extract_username)
-        after_sample = df["author"].head(3).tolist()
-
-        print(f"[INFO] Sample before → after:")
-        for b, a in zip(before_sample, after_sample):
-            print(f"   {b}  →  {a}")
-
-        try:
-            df.to_csv(file_path, index=False)
-            print(f"[SUCCESS] Overwritten cleaned file: {file_path}")
-        except Exception as e:
-            print(f"[ERROR] Could not save {file_path}: {e}")
-
+# === FILE ENRICHMENT =====================================
 def enrich_prs_and_comments(team_folder):
     """Enrich PRs with top file metrics and add order_of_review to comments using utility functions."""
     # Call the utility functions that handle all the enrichment
@@ -138,9 +90,9 @@ def process_all_teams():
     
     print(f"[INFO] Found {len(team_folders)} team folder(s)")
     
-    # STEP 1: Clean review comments and enrich files
+    # STEP 1: Enrich files
     print("\n" + "="*70)
-    print("STEP 1: CLEANING AND ENRICHING FILES")
+    print("STEP 1: ENRICHING FILES")
     print("="*70)
     
     for team_folder in team_folders:
@@ -148,11 +100,10 @@ def process_all_teams():
         print(f"[INFO] Processing: {team_folder.name}")
         print(f"{'='*70}")
         
-        clean_review_comments(team_folder)
         enrich_prs_and_comments(team_folder)
     
     print(f"\n{'='*70}")
-    print("[COMPLETE] All review comments cleaned and files enriched")
+    print("[COMPLETE] All files enriched")
     print(f"{'='*70}")
     
     # STEP 2: Generate labels
