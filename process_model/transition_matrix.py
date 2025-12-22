@@ -1,6 +1,7 @@
 import os, re, glob
 import pandas as pd
 import numpy as np
+import ast
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
@@ -30,6 +31,37 @@ def parse_team_name_and_number(fp: str) -> tuple[str, str]:
     team_number = num_m.group(1) if num_m else "unknown"
     return team_name, team_number
 
+
+def normalize_event_field(event):
+    """
+    Old-graphing behavior:
+      - if event looks like a list string: "['a','b']" -> ['a','b']
+      - otherwise: 'a' -> ['a']
+    """
+    if pd.isna(event):
+        return []
+
+    # if it's already a list (rare, but safe)
+    if isinstance(event, list):
+        return [str(x).strip() for x in event if str(x).strip()]
+
+    s = str(event).strip()
+    if not s:
+        return []
+
+    if s.startswith("[") and s.endswith("]"):
+        try:
+            parsed = ast.literal_eval(s)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+            return [str(parsed).strip()]
+        except Exception:
+            # fall back: treat as a single event string
+            return [s]
+
+    return [s]
+
+
 def load_noholes_csv(fp: str) -> pd.DataFrame:
     df = pd.read_csv(fp, low_memory=False)
     required = {"pr_id", "timestamp", "event"}
@@ -39,12 +71,24 @@ def load_noholes_csv(fp: str) -> pd.DataFrame:
 
     df["pr_id"] = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-    df["event"] = df["event"].astype(str).str.strip()
+
+    # keep original row order so list-elements keep deterministic ordering
+    df["_row_idx"] = np.arange(len(df))
+
+    # parse event into list, then explode to one-event-per-row (old graphing behavior)
+    df["event_list"] = df["event"].apply(normalize_event_field)
+    df = df.explode("event_list", ignore_index=True)
+
+    df["event"] = df["event_list"].astype(str).str.strip()
 
     df = df.dropna(subset=["pr_id", "timestamp"])
     df = df[df["event"].ne("")]
 
-    return df.sort_values(["pr_id", "timestamp"]).reset_index(drop=True)
+    # IMPORTANT: stable sort to preserve within-timestamp ordering
+    df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
+
+    return df[["pr_id", "timestamp", "event"]]
+
 
 def compute_overall_edges_old_style(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     """
