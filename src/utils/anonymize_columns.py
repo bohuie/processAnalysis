@@ -81,22 +81,27 @@ def anonymize_author_columns(
 ) -> None:
     """
     Anonymize any column whose header contains 'author' (case-insensitive)
-    across multiple DataFrames, in-place.
+    or is exactly 'merged_by' (case-insensitive) across multiple DataFrames,
+    in-place.
 
     For each (name, df) in named_dfs:
-      - Find columns where 'author' is in the column name (lowercased).
+      - Find columns where 'author' is in the column name (lowercased),
+        plus any column named 'merged_by' (lowercased).
       - Replace each non-empty cell in those columns with anonymize_username(value),
         which also updates anonymized_usernames.json.
     """
     for df_name, df in named_dfs:
         # Find author-related columns
         author_cols = [col for col in df.columns if "author" in col.lower()]
-        if not author_cols:
+        merged_by_cols = [col for col in df.columns if col.lower() == "merged_by"]
+
+        target_cols = list({*author_cols, *merged_by_cols})
+        if not target_cols:
             continue
 
-        print(f"[INFO] Anonymizing author columns in {df_name}: {author_cols}")
+        print(f"[INFO] Anonymizing author/merged_by columns in {df_name}: {target_cols}")
 
-        for col in author_cols:
+        for col in target_cols:
             df[col] = df[col].apply(_anonymize_cell)
 
 
