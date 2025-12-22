@@ -8,7 +8,9 @@ from src.utils.enrich_columns import add_order_of_review
 # helper imports
 from event_labelling.PR.helpers_pr import (
     drop_bots_in_author_like_columns,
-    drop_log_rows,)
+    find_log_pr_ids,
+    drop_pr_ids,
+)
 
 
 # ---------------------------------------------------------------------
@@ -88,10 +90,17 @@ def preprocess_team_csvs(
     raw_commits_df = drop_bots_in_author_like_columns(raw_commits_df, f"{team_name} Commits")
     raw_reviews_df = drop_bots_in_author_like_columns(raw_reviews_df, f"{team_name} Reviews")
 
-    # 2) Remove log-ish rows
-    raw_prs_df = drop_log_rows(raw_prs_df, f"{team_name} PRs")
-    raw_commits_df = drop_log_rows(raw_commits_df, f"{team_name} Commits")
-    raw_reviews_df = drop_log_rows(raw_reviews_df, f"{team_name} Reviews")
+    # 2) Detect log-ish PRs across ALL sources, then drop everywhere
+    bad_pr_ids = set()
+    bad_pr_ids |= find_log_pr_ids(raw_prs_df, f"{team_name} PRs")
+    bad_pr_ids |= find_log_pr_ids(raw_commits_df, f"{team_name} Commits")
+    bad_pr_ids |= find_log_pr_ids(raw_reviews_df, f"{team_name} Reviews")
+
+    print(f"[STEP -1B MASTER] {team_name}: total unique log PR_ids across ALL CSVs = {len(bad_pr_ids)}")
+
+    raw_prs_df = drop_pr_ids(raw_prs_df, bad_pr_ids, f"{team_name} PRs")
+    raw_commits_df = drop_pr_ids(raw_commits_df, bad_pr_ids, f"{team_name} Commits")
+    raw_reviews_df = drop_pr_ids(raw_reviews_df, bad_pr_ids, f"{team_name} Reviews")
 
     # 3) Review-specific filters
     raw_reviews_df = _apply_review_specific_filters(raw_reviews_df, team_name)

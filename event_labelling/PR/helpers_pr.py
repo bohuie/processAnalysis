@@ -42,74 +42,67 @@ def drop_bots_in_author_like_columns(df: pd.DataFrame, df_label: str) -> pd.Data
     )
     
 
-LOG_PATTERN = re.compile(
-    r"(?i)(?:\blogs?\b|weeklylogs?\b|teamlogs?\b|personallogs?\b)"
-)
+LOG_PATTERN = re.compile(r"(?i)(?:\blogs?\b|weeklylogs?\b|teamlogs?\b|personallogs?\b)")
 
-
-def drop_log_rows(df: pd.DataFrame, df_label: str) -> pd.DataFrame:
+def find_log_pr_ids(df: pd.DataFrame, df_label: str) -> set[str]:
     """
-    If ANY row belonging to a pr_id contains a log pattern in ANY cell,
-    drop ALL rows with that pr_id.
-
-    (Fallback: if 'pr_id' is missing, behave like the old row-level filter.)
+    Return the set of pr_id values (as strings) for which ANY row
+    contains the log pattern in ANY non-pr_id column.
     """
     if df.empty:
-        print(f"[INFO] {df_label}: DataFrame empty, skipping log filter.")
-        return df
+        print(f"[INFO] {df_label}: empty df, no log PRs.")
+        return set()
 
-    # If we can't do PR-level removal, fall back to old behavior
     if "pr_id" not in df.columns:
-        print(f"[WARN] {df_label}: no 'pr_id' column found — falling back to row-level log filtering.")
-        str_df = df.astype(str)
-        col_matches = str_df.apply(lambda col: col.str.contains(LOG_PATTERN, na=False), axis=0)
-        row_has_log = col_matches.any(axis=1)
-        before = len(df)
-        filtered_df = df[~row_has_log].copy()
-        removed = before - len(filtered_df)
-        print(f"[STEP -1B] {df_label}: removed {removed} rows containing 'log'/'logs' "
-              f"({before} -> {len(filtered_df)}).")
-        return filtered_df
+        print(f"[WARN] {df_label}: no pr_id column, cannot build global log-pr set from this df.")
+        return set()
 
-    # --- PR-level filtering ---
-    # check all cells as strings, but EXCLUDE pr_id itself from matching
     cols_to_check = [c for c in df.columns if c != "pr_id"]
     if not cols_to_check:
-        print(f"[INFO] {df_label}: only 'pr_id' column present — skipping log filter.")
-        return df
+        print(f"[INFO] {df_label}: only pr_id column present, no log PRs.")
+        return set()
 
     str_df = df[cols_to_check].astype(str)
-
-    # row-level flags: does this row contain a log pattern anywhere?
     col_matches = str_df.apply(lambda col: col.str.contains(LOG_PATTERN, na=False), axis=0)
     row_has_log = col_matches.any(axis=1)
 
-    # collect pr_ids to drop (any row in that pr_id matched)
     bad_pr_ids = (
         df.loc[row_has_log, "pr_id"]
           .dropna()
-          .astype(str)  # robust in case some are Int64 / mixed
+          .astype(str)
           .unique()
           .tolist()
     )
 
+    out = set(bad_pr_ids)
+    print(f"[STEP -1B DETECT] {df_label}: detected {len(out)} log PR_ids.")
+    return out
+
+
+def drop_pr_ids(df: pd.DataFrame, pr_ids_to_drop: set[str], df_label: str) -> pd.DataFrame:
+    """
+    Drop ALL rows whose pr_id is in pr_ids_to_drop.
+    """
+    if df.empty or not pr_ids_to_drop:
+        print(f"[STEP -1B APPLY] {df_label}: nothing to drop.")
+        return df
+
+    if "pr_id" not in df.columns:
+        print(f"[WARN] {df_label}: no pr_id column, cannot apply pr_id drop.")
+        return df
+
     before_rows = len(df)
     before_prs = df["pr_id"].nunique(dropna=True)
 
-    if not bad_pr_ids:
-        print(f"[STEP -1B] {df_label}: removed 0 log PRs ({before_rows} rows unchanged).")
-        return df
+    mask_keep = ~df["pr_id"].astype(str).isin(pr_ids_to_drop)
+    filtered = df[mask_keep].copy()
 
-    # drop ALL rows where pr_id is in bad_pr_ids
-    filtered_df = df[~df["pr_id"].astype(str).isin(bad_pr_ids)].copy()
-
-    after_rows = len(filtered_df)
-    after_prs = filtered_df["pr_id"].nunique(dropna=True)
+    after_rows = len(filtered)
+    after_prs = filtered["pr_id"].nunique(dropna=True)
 
     print(
-        f"[STEP -1B] {df_label}: removed {len(bad_pr_ids)} log PR_ids "
-        f"({before_prs} -> {after_prs} PRs), "
-        f"dropping {before_rows - after_rows} rows ({before_rows} -> {after_rows})."
+        f"[STEP -1B APPLY] {df_label}: dropped {before_rows - after_rows} rows "
+        f"({before_rows}->{after_rows}), PRs {before_prs}->{after_prs}."
     )
+    return filtered
 
-    return filtered_df
