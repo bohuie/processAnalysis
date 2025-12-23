@@ -22,10 +22,5 @@ data/*
 venv/
 
 # Ignore specific files
-<<<<<<< HEAD
-confidential/
-=======
-confidential/
 .DS_Store
 **/.DS_Store
->>>>>>> origin/feature/graphing_process
