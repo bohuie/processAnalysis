@@ -22,6 +22,12 @@ data/*
 venv/
 
 # Ignore specific files
+.DS_Store
+**/.DS_Store
+confidential/
+.DS_Store
+**/.DS_Store
+confidential/
 confidential/
 .DS_Store
 **/.DS_Store
