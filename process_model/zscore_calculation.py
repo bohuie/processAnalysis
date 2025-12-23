@@ -1,12 +1,50 @@
 import os
+from pathlib import Path
 import pandas as pd
 import numpy as np
+from dotenv import load_dotenv
+
+# ============================================================
+# CONFIGURATION SWITCH - Choose which folder to process
+# ============================================================
+# Set to "branching" or "pr"
+# Can be set via environment variable: FOLDER_SOURCE=branching python ...
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
+
+# ============================================================
+# CONFIGURATION SWITCH - Choose which files to process
+# ============================================================
+# Set to "branching" or "pr_labels"
+# Can be set via environment variable: FILE_SOURCE=branching python ...
+script_path = Path(__file__).resolve()
+print(f"[DEBUG] Script location: {script_path}")
+
+env_path = script_path.parent.parent / '.env'
+print(f"[DEBUG] Looking for .env at: {env_path}")
+print(f"[DEBUG] .env exists: {env_path.exists()}")
+
+# Load it
+load_dotenv(dotenv_path=env_path)
+FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")
+FILE_SOURCE = os.getenv("FILE_SOURCE")
+# ============================================================
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-IN_FP = os.path.join(ROOT, "data", "outputs", "pr", "team_transition_edges_avg_session.csv")
-OUT_FP = os.path.join(ROOT, "data", "outputs", "pr", "team_transition_edges_avg_session_zscores.csv")
+# Determine input/output paths based on FOLDER_SOURCE
+if FOLDER_SOURCE == "branching":
+    DATA_DIR = os.path.join(ROOT, "data", "outputs", "branching")
+    print("[CONFIG] Processing branching data from data/outputs/branching/")
+elif FOLDER_SOURCE == "pr":
+    DATA_DIR = os.path.join(ROOT, "data", "outputs", "pr")
+    print("[CONFIG] Processing PR data from data/outputs/pr/")
+else:
+    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr'")
+
+IN_FP = os.path.join(DATA_DIR, "team_transition_edges_avg_session.csv")
+OUT_FP = os.path.join(DATA_DIR, "team_transition_edges_avg_session_zscores.csv")
 
 
 def zscore_per_team(edges: pd.DataFrame, team_col: str) -> pd.DataFrame:
@@ -29,6 +67,13 @@ def zscore_per_team(edges: pd.DataFrame, team_col: str) -> pd.DataFrame:
 
 
 def main():
+    if not os.path.exists(IN_FP):
+        raise FileNotFoundError(
+            f"Missing required input: {IN_FP}\n"
+            f"Run transition_matrix.py first with FILE_SOURCE='{FOLDER_SOURCE}'"
+        )
+    
+    print(f"[INFO] Loading data from: {IN_FP}")
     edges = pd.read_csv(IN_FP, low_memory=False)
 
     required = {"from", "to", "count"}
@@ -44,6 +89,7 @@ def main():
     else:
         raise ValueError(f"Missing team identifier column. Expected 'team_number' or 'team_name' in {IN_FP}.")
 
+    print("[INFO] Computing z-scores...")
     out = zscore_per_team(edges, team_col=team_col)
     out.to_csv(OUT_FP, index=False)
     print(f"[OK] Wrote: {OUT_FP}")
@@ -51,4 +97,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
