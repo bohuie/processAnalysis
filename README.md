@@ -23,8 +23,8 @@ The workflow consists of several stages — from data extraction to graph genera
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/<your-username>/collabAnalysis.git
-cd collabAnalysis
+git clone https://github.com/<your-username>/processAnalysis.git
+cd processAnalysis
 ```
 
 ### 2. Create a Virtual Environment
@@ -75,17 +75,18 @@ python scripts/app.py
 ⚠️ Make sure you've added your target repositories in the `repositories` list before running.
 
 ### 2. Data Enrichment  
+Run enrichment and PR/communication labeling (from repo root):
 ```bash
 python enrich_output/overwrite_files.py
-python event_labelling/Utility/pr_communication_label.py
+python event_labelling/PR/pr_label.py
+python event_labelling/Communication/comm_label.py
 ```
 
 ### 3. Code Structure & Branching Analysis  
 Requires a running Ollama instance. There are two entry points; run either from the repository root:
+Run the orchestration script from the repository root:
 ```bash
-python event_labelling/CodeStructure_Branching/code_structure_and_branching.py
 python event_labelling/CodeStructure_Branching/main.py
-python event_labelling/Utility/csvFix.py
 ```
 
 ### 4. Data Cleaning  
@@ -105,28 +106,28 @@ python process_model/graphing.py
 ```
 
 ### 7. Statistical Analysis (Optional)  
-To get general repository statistics:
+To get general repository statistics run the project-level analysis script from the repo root:
 ```bash
-python event_labelling/analysis.py
+python analysis.py
 ```
 
 ---
 
 ## 🛠️ Utility Modules
 
-### Bot Filter (`event_labelling/Utility/botFilter.py`)
+### Bot Filter (`src/utils/botFilter.py`)
 
-A reusable utility module for filtering bot accounts from GitHub data.
+A reusable utility module for filtering bot accounts located in `src/utils/botFilter.py`.
 
 **Features:**
-- Detects 20+ common bot patterns (dependabot, renovate, GitHub Actions, etc.)
-- Flexible filtering functions for DataFrames
+- Detects common bot patterns (dependabot, renovate, GitHub Actions, etc.)
+- Flexible filtering functions for pandas DataFrames
 - Extensible with custom bot patterns
-- Includes verbose logging for transparency
+- Verbose logging for transparency
 
 **Usage Example:**
 ```python
-from event_labelling.Utility.bot_filter import remove_bot_prs, remove_bot_commits
+from src.utils.botFilter import remove_bot_prs, remove_bot_commits, filter_bots_from_multiple_columns
 
 # Filter bot PRs
 clean_prs_df = remove_bot_prs(prs_df)
@@ -135,16 +136,14 @@ clean_prs_df = remove_bot_prs(prs_df)
 clean_commits_df = remove_bot_commits(commits_df)
 
 # Custom filtering
-from event_labelling.Utility.bot_filter import filter_bots_from_dataframe
-clean_df = filter_bots_from_dataframe(df, username_column='reviewer')
+clean_df = filter_bots_from_multiple_columns(df, username_columns=['pr_author', 'merged_by'])
 ```
 
-**Available Functions:**
+**Available Functions (examples):**
 - `is_bot_username()` - Check if a username is a bot
 - `filter_bots_from_dataframe()` - Filter bots from any DataFrame
 - `remove_bot_prs()` - Convenience function for PR data
 - `remove_bot_commits()` - Convenience function for commit data
-- `get_bot_usernames()` - List all bot usernames found
 - `filter_bots_from_multiple_columns()` - Filter based on multiple columns
 
 ---
@@ -162,35 +161,52 @@ The scripts produce:
 ## 🧱 Project Structure
 
 ```
-collabAnalysis/
-├── documentation/
-│   ├── analysis.md             # Analysis documentation
-│   ├── app.md                  # App usage guide
-│   └── csvFix.md               # CSV fixing documentation
+processAnalysis/
+├── README.md
+├── analysis.py                        # Project-level analysis runner
+├── requirements.txt
 ├── scripts/
-│   └── app.py                  # Fetches data via GitHub API
+│   └── app.py                         # Data extraction wrapper (uses src.extractors)
+├── documentation/                     # User-facing documentation
+│   ├── analysis.md
+│   ├── app.md
+│   └── code_structure_and_branching.md
+├── src/                               # Core libraries used by scripts
+│   ├── extractors/
+│   │   └── pull_request_extractor.py
+│   └── utils/
+│       ├── botFilter.py
+│       ├── ollama_offline.py
+│       └── ...
 ├── enrich_output/
-│   └── overwrite_files.py      # Data enrichment step
+│   └── overwrite_files.py             # Data enrichment helpers
 ├── event_labelling/
 │   ├── CodeStructure_Branching/
-│   │   └── code_structure_and_branching.py  # Code structure analysis (also see main.py)
-│   ├── Utility/                # 🆕 Utility modules
-│   |   ├── botFilter.py        # 🤖 Bot filtering utility
-│   ├── csvFix.py           # CSV repair utilities
-│   ├── pr_communication_label.py  # PR communication labeling
-│   └── relabelling.py      # Data relabeling utilities
+│   │   ├── main.py                     # Orchestration for branching/structure labeling
+│   │   ├── label_branch_names.py
+│   │   ├── label_features_per_branch.py
+│   │   ├── label_feature_size.py
+│   │   ├── label_refactor_size.py
+│   │   ├── label_pr_status.py
+│   │   └── clean_lable.py
+│   ├── PR/
+│   │   ├── pr_label.py
+│   │   ├── helpers_pr.py
+│   │   └── prep_data.py
+│   └── Communication/
+│       └── comm_label.py
 ├── process_model/
-│   ├── clean.py                # Data cleaning
-│   ├── preprocessing.py        # Data preprocessing
-│   └── graphing.py             # Graph generation
+│   ├── clean.py
+│   ├── preprocessing.py
+│   └── graphing.py
 ├── test/
-│   ├── testApp.py              # App testing
-│   ├── testBot_filter.py       # 🆕 Bot filter tests
-│   └── testClean.py            # Clean module tests
+│   ├── test_llm_output.py
+│   ├── testApp.py
+│   └── testBot_filter.py
 ├── data/
-│   └── csv/                    # Output CSVs and processed data
-├── confidential/               # Sensitive or anonymized data (e.g., usernames)
-└── README.md                   # This file
+│   └── csv/                           # Output CSVs and processed data (per-team folders)
+├── confidential/                      # Optional: anonymization mapping, secrets (gitignored)
+└── requirements.stable.txt
 ```
 
 ---
