@@ -22,6 +22,8 @@ PR_LEVEL_LABELS = {
     "Branch Name",
     "Features Per Branch",
     "Repository Status",
+    "Feature Size",
+    "Refactor Size",
     "PR Status",
     "Merge State"
 }
