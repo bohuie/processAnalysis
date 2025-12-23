@@ -2,6 +2,8 @@ import os, re, glob
 import pandas as pd
 import numpy as np
 import ast
+from pathlib import Path
+from dotenv import load_dotenv
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
@@ -10,7 +12,22 @@ ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 # CONFIGURATION SWITCH - Choose which files to process
 # ============================================================
 # Set to "branching" or "pr_labels"
-FILE_SOURCE = "branching"  # or "pr_labels"
+# Can be set via environment variable: FILE_SOURCE=branching python ...
+script_path = Path(__file__).resolve()
+print(f"[DEBUG] Script location: {script_path}")
+
+env_path = script_path.parent.parent / '.env'
+print(f"[DEBUG] Looking for .env at: {env_path}")
+print(f"[DEBUG] .env exists: {env_path.exists()}")
+
+# Load it
+load_dotenv(dotenv_path=env_path)
+
+# Check what was loaded
+print(f"[DEBUG] FILE_SOURCE = {os.getenv('FILE_SOURCE')}")
+print(f"[DEBUG] FOLDER_SOURCE = {os.getenv('FOLDER_SOURCE')}")
+
+FILE_SOURCE = os.getenv("FILE_SOURCE")
 # ============================================================
 
 # Configuration for branching_and_structure files
@@ -19,7 +36,8 @@ BRANCHING_CONFIG = {
     "prefix": "CLEAN_year-long-project-team-",
     "pattern": "*_labels_branching_and_structure.csv",
     "regex": re.compile(r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$", re.IGNORECASE),
-    "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv"
+    "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv",
+    "output_folder": os.path.join(ROOT, "data", "outputs", "branching")
 }
 
 # Configuration for pr_labels files
@@ -28,24 +46,27 @@ PR_LABELS_CONFIG = {
     "prefix": "CLEAN_pr_labels_",
     "pattern": "year-long-project-team-*.csv",
     "regex": re.compile(r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$", re.IGNORECASE),
-    "example": "CLEAN_pr_labels_year-long-project-team-7.csv"
+    "example": "CLEAN_pr_labels_year-long-project-team-7.csv",
+    "output_folder": os.path.join(ROOT, "data", "outputs", "pr")
 }
 
 # Select active configuration
 if FILE_SOURCE == "branching":
     CONFIG = BRANCHING_CONFIG
     print("[CONFIG] Using branching_and_structure files from data/graph_labels/clean/")
+    print(f"[CONFIG] Output will be saved to: {CONFIG['output_folder']}")
 elif FILE_SOURCE == "pr_labels":
     CONFIG = PR_LABELS_CONFIG
     print("[CONFIG] Using pr_labels files from data/csv/")
+    print(f"[CONFIG] Output will be saved to: {CONFIG['output_folder']}")
 else:
     raise ValueError(f"Invalid FILE_SOURCE: {FILE_SOURCE}. Must be 'branching' or 'pr_labels'")
 
 DATA_FOLDER = CONFIG["data_folder"]
 CLEAN_PREFIX = CONFIG["prefix"]
 TEAM_RE = CONFIG["regex"]
+OUT_FOLDER = CONFIG["output_folder"]
 
-OUT_FOLDER = os.path.join(ROOT, "data", "outputs", "pr")
 os.makedirs(OUT_FOLDER, exist_ok=True)
 
 def discover_clean_team_files() -> list[str]:

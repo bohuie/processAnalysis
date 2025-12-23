@@ -1,14 +1,53 @@
-# clustering.py
 import os
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+from dotenv import load_dotenv
+
+# ============================================================
+# CONFIGURATION SWITCH - Choose which folder to process
+# ============================================================
+# Set to "branching" or "pr"
+# Can be set via environment variable: FOLDER_SOURCE=branching python ...
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
+
+# ============================================================
+# CONFIGURATION SWITCH - Choose which files to process
+# ============================================================
+# Set to "branching" or "pr_labels"
+# Can be set via environment variable: FILE_SOURCE=branching python ...
+script_path = Path(__file__).resolve()
+print(f"[DEBUG] Script location: {script_path}")
+
+env_path = script_path.parent.parent / '.env'
+print(f"[DEBUG] Looking for .env at: {env_path}")
+print(f"[DEBUG] .env exists: {env_path.exists()}")
+
+# Load it
+load_dotenv(dotenv_path=env_path)
+FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")  # default: "branching"
+# ============================================================
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-IN_FP = os.path.join(ROOT, "data", "outputs", "pr", "team_transition_edges_avg_session_zscores.csv")
-OUT_FP = os.path.join(ROOT, "data", "outputs", "pr", "behavior_clusters_pr.csv")
+
+# Determine input/output paths based on FOLDER_SOURCE
+if FOLDER_SOURCE == "branching":
+    DATA_DIR = os.path.join(ROOT, "data", "outputs", "branching")
+    CLUSTER_SUFFIX = "branching"
+    print("[CONFIG] Processing branching data from data/outputs/branching/")
+elif FOLDER_SOURCE == "pr":
+    DATA_DIR = os.path.join(ROOT, "data", "outputs", "pr")
+    CLUSTER_SUFFIX = "pr"
+    print("[CONFIG] Processing PR data from data/outputs/pr/")
+else:
+    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr'")
+
+IN_FP = os.path.join(DATA_DIR, "team_transition_edges_avg_session_zscores.csv")
+OUT_FP = os.path.join(DATA_DIR, f"behavior_clusters_{CLUSTER_SUFFIX}.csv")
 
 Z_THRESHOLD = 1.645  # pick in clustering, not zscore script
 
@@ -60,7 +99,16 @@ def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
     return best_k, best_score
 
 def main():
+    if not os.path.exists(IN_FP):
+        raise FileNotFoundError(
+            f"Missing required input: {IN_FP}\n"
+            f"Run zscore_calculation.py first with FOLDER_SOURCE='{FOLDER_SOURCE}'"
+        )
+    
+    print(f"[INFO] Loading data from: {IN_FP}")
     df = pd.read_csv(IN_FP, low_memory=False)
+    
+    print("[INFO] Building team matrix...")
     teams, pairs, X = build_team_matrix(df, z_threshold=Z_THRESHOLD)
 
     nonzero_mask = (X.sum(axis=1) > 0)
@@ -78,6 +126,7 @@ def main():
         print(f"[OK] Wrote: {OUT_FP} (not enough teams to cluster)")
         return
 
+    print("[INFO] Performing clustering...")
     best_k, best_sil = choose_best_k(X)
     km = KMeans(n_clusters=best_k, n_init=25, random_state=42)
     clusters = km.fit_predict(X)
