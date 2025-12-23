@@ -1,10 +1,10 @@
 # GitHub Data Extraction Script — Comprehensive Reference
 
-This document describes [scripts/app.py](../../scripts/app.py), the main data extraction and enrichment script for the processAnalysis project. It orchestrates GitHub API calls, enriches PR metadata, and generates the CSVs consumed by downstream labeling and analysis pipelines.
+This document describes [scripts/app.py](../scripts/app.py), the main data extraction and enrichment script for the processAnalysis project. It orchestrates GitHub API calls, enriches PR metadata, and generates the CSVs consumed by downstream labeling and analysis pipelines.
 
 ## Overview & Purpose
 
-[scripts/app.py](../../scripts/app.py) is a **single-purpose data extraction and enrichment tool**. It:
+[scripts/app.py](../scripts/app.py) is a **single-purpose data extraction and enrichment tool**. It:
 1. Connects to GitHub API using `PullRequestExtractor`
 2. Fetches PRs, commits, file changes, and review comments
 3. **Enriches** PRs with computed metrics (reviewers count, lines added/deleted, merge status, etc.)
@@ -34,7 +34,7 @@ The script prints diagnostic output:
 
 ## Configuration & Parameters
 
-Edit the `## CONFIGURATION ##` section near the bottom of [scripts/app.py](../../scripts/app.py) to customize:
+Edit the `## CONFIGURATION ##` section near the bottom of [scripts/app.py](../scripts/app.py) to customize:
 
 ```python
 REPO_OWNER = "COSC-499-W2023"          # GitHub organization
