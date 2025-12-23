@@ -81,9 +81,10 @@ python event_labelling/Utility/pr_communication_label.py
 ```
 
 ### 3. Code Structure & Branching Analysis  
-Requires a running Ollama instance.
+Requires a running Ollama instance. There are two entry points; run either from the repository root:
 ```bash
 python event_labelling/CodeStructure_Branching/code_structure_and_branching.py
+python event_labelling/CodeStructure_Branching/main.py
 python event_labelling/Utility/csvFix.py
 ```
 
@@ -171,8 +172,8 @@ collabAnalysis/
 ├── enrich_output/
 │   └── overwrite_files.py      # Data enrichment step
 ├── event_labelling/
-│   ├── CodeStructure&Branching/
-│   │   └── code_structure_and_branching.py  # Code structure analysis
+│   ├── CodeStructure_Branching/
+│   │   └── code_structure_and_branching.py  # Code structure analysis (also see main.py)
 │   ├── Utility/                # 🆕 Utility modules
 │   |   ├── botFilter.py        # 🤖 Bot filtering utility
 │   ├── csvFix.py           # CSV repair utilities
