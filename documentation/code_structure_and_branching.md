@@ -1,115 +1,250 @@
-# Code Structure & Branching — Script Reference
+# Code Structure & Branching — Comprehensive Reference
 
-This document reflects the current behaviour of the Code Structure & Branching tooling in
-`event_labelling/CodeStructure_Branching/`. The repository contains both
-`code_structure_and_branching.py` (refactor) and `main.py` (orchestration); both are documented
-here. The file below describes inputs, configuration, main processing steps, and outputs
-produced by `process_all_teams()`.
+This document describes the Code Structure & Branching labeling system in `event_labelling/CodeStructure_Branching/`. The tooling analyzes PR metadata, commits, and file changes to generate event labels used for research on team development practices. The primary entry point is `main.py`, which orchestrates a multi-stage pipeline: enrichment → cleaning → bot filtering → anonymization → LLM-based labeling → output.
 
-## Summary
+## Overview & Purpose
 
-- Cleans review comments (extracts usernames from dict-like fields)
-- Enriches PRs with top-file metrics and a docs-updated flag
-- Adds `order_of_review` to review comments
-- Removes bot PRs/commits using utilities in `src.utils.botFilter`
-- Optionally anonymizes authors and branch-name username components
-- Generates event labels (branch naming, feature/refactor sizes, repo/pr/merge status)
-- Saves labels and LLM reasoning to `data/graph_labels/`
+The Code Structure & Branching labeler processes raw GitHub data (extracted by `scripts/app.py`) to produce enriched event labels. It answers questions like:
+- Are branch names meaningful and follow conventions?
+- How large are individual features/refactors in terms of code changes?
+- Did branches stay up-to-date with their base before merging?
+- What proportion of commits went to key files?
+
+These labels support research into team development workflows, code review practices, and branching strategies.
+
+## Summary of What the Script Does
+
+1. **Enriches PRs** with top-file metrics and documentation-update flags
+2. **Cleans review comments** (normalizes author fields and username extraction)
+3. **Removes bot activity** (filters out automated PRs/commits from dependabot, github-actions, etc.)
+4. **Anonymizes data** (replaces real usernames with coded IDs if configured)
+5. **Generates event labels** via LLM and heuristic-based labelers
+6. **Saves two output CSVs per team** to `data/graph_labels/`
 
 ## Key Requirements
 
-- Python 3.8+ (project uses `pyenv` in development)
-- Core dependencies: `pandas`, `tqdm`, `python-dateutil` (see `requirements.txt`)
-- Local Ollama instance for LLM assessments (optional if `connect_ollama_offline` is a no-op)
+- **Python**: 3.8+ (project uses `pyenv` for version management)
+- **Core dependencies**: `pandas`, `tqdm`, `python-dateutil` (see [requirements.txt](requirements.txt))
+- **LLM backend**: Local Ollama instance with `llama3.2:3b` model (or compatible)
+  - Install Ollama: https://ollama.ai
+  - Pull model: `ollama pull llama3.2:3b`
+  - Run daemon: `ollama serve` (in separate terminal)
 
-Quick install (example):
+Quick setup:
 ```bash
 python -m pip install -r requirements.txt
-# If you use Ollama locally:
-# ollama serve
-# ollama pull llama3.2:3b
+# Optional: set up Ollama for LLM-based labeling
+ollama serve &
+ollama pull llama3.2:3b
 ```
 
-## Where to run
+## Running the Script
 
-Run the tooling from the project root (repository root is assumed). There are two
-entry points in the folder; either can be used depending on your workflow:
+Execute from the **project root** (so relative paths like `data/csv/` resolve correctly):
 
 ```bash
-# Option A: run the consolidated/refactor script
-python event_labelling/CodeStructure_Branching/code_structure_and_branching.py
-
-# Option B: run the orchestration script (calls utilities in the same folder)
 python event_labelling/CodeStructure_Branching/main.py
 ```
 
-## Directory expectations
+The script discovers all `year-long-project-team-*` folders in `data/csv/` and processes them sequentially. Progress is printed to stdout.
 
-The script expects team CSV folders under `data/csv/` using the pattern `year-long-project-team-*`.
+## Input Data Expectations
 
-Example structure:
+The script reads CSV files from `data/csv/{team_name}/` folders. Expected files per team:
 
 ```
-data/csv/
-└── year-long-project-team-1/
-   ├── year-long-project-team-1_all_pull_requests.csv
-   ├── year-long-project-team-1_PR_commits.csv
-   ├── year-long-project-team-1_commit_file_changes.csv
-   └── year-long-project-team-1_review-comments.csv
+data/csv/year-long-project-team-1/
+├── year-long-project-team-1_all_pull_requests.csv    ← PR metadata (id, author, dates, merge status)
+├── year-long-project-team-1_PR_commits.csv           ← Commits per PR (sha, message, lines)
+├── year-long-project-team-1_commit_file_changes.csv  ← File-level changes (path, additions, deletions)
+└── year-long-project-team-1_review-comments.csv      ← Review comments and feedback
 ```
 
-An anonymization mapping (optional) is loaded from `confidential/anonymized_usernames.json`
-relative to the project root. If present, the `ANONYMIZE` module-level flag controls whether
-anonymization is applied. The anonymization mapping is applied case-insensitively across
-selected columns (`pr_author`, `merged_by`, `head_branch`).
+**Note:** These are typically generated by [scripts/app.py](../scripts/app.py) during the data extraction phase. If files are missing or named differently, teams are skipped with a warning.
 
-## Main Configuration (script-level)
+### Required CSV Columns
 
-Key module-level constants in the script:
+| File | Key Columns |
+|------|------------|
+| PRs | `pr_id`, `pr_author`, `created_at`, `merged_at`, `head_branch`, `base_branch`, `was_up_to_date_at_merge` |
+| Commits | `pr_id`, `commit_sha`, `author`, `lines_added`, `lines_deleted` |
+| File changes | `pr_id`, `file_path`, `status`, `additions`, `deletions` |
+| Comments | `pr_id`, `author`, `comment_body`, `created_at` |
 
-- `MODEL_NAME` — LLM model identifier used by the local `ask_llm` wrapper (default: `llama3.2:3b`)
-- `RUN_TIMESTAMP` — ISO timestamp used in label outputs
-- `ANONYMIZE` — boolean flag to enable anonymization
+## Configuration
 
-The code uses the helper `connect_ollama_offline` from `src.utils.ollama_offline` for LLM calls.
+Key settings in [event_labelling/CodeStructure_Branching/main.py](../event_labelling/CodeStructure_Branching/main.py):
 
-## Processing stages (what the script does)
+| Setting | Type | Default | Purpose |
+|---------|------|---------|---------|
+| `MODEL_NAME` | str | `llama3.2:3b` | LLM model identifier for branch-name assessment |
+| `RUN_TIMESTAMP` | str | ISO timestamp | Adds reproducible timestamp to output rows |
+| `ANONYMIZE` | bool | `True` | Enable/disable username anonymization |
 
-1. Discover all team folders under `data/csv/`.
-2. For each team: run `clean_review_comments(team_folder)` to extract usernames from `author` fields in review comments and overwrite the CSV with cleaned author values.
-3. Run `enrich_prs_and_comments(team_folder)`, which delegates enrichment to utility functions in `src.utils.enrich_columns`:
+**Anonymization mapping:** If `ANONYMIZE=True`, the script loads a mapping file from `confidential/anonymized_usernames.json` (relative to project root). This file should be a JSON dict mapping real usernames to pseudonymous IDs. The mapping is applied case-insensitively to `pr_author`, `merged_by`, and `head_branch` columns.
 
-   - `add_top_file_metrics(team_folder)` — computes `top_file` and `top_file_change_%` on PR CSVs
-   - `add_docs_updated_flag(team_folder)` — sets `docs_updated` if docs changed
-   - `add_order_of_review(team_folder)` — adds `order_of_review` to review comments
+Example `confidential/anonymized_usernames.json`:
+```json
+{
+  "alice": "user_001",
+  "bob": "user_002",
+  "charlie": "user_003"
+}
+```
 
-4. Load required CSVs (`*_all_pull_requests.csv`, `*_PR_commits.csv`, `*_commit_file_changes.csv`), filter bots using `src.utils.botFilter`, optionally anonymize, and prepare timestamp lookups.
+## Processing Pipeline (Detailed)
 
-5. Generate labels via functions in the same file:
+### Stage 1: Discovery
+- Scan `data/csv/` for all folders matching pattern `year-long-project-team-*`
+- For each folder, verify required CSVs exist; skip if missing
 
-   - `label_branch_names(prs_df)` — LLM-based branch-name assessment (uses `assess_branch_meaningfulness`)
-   - `label_features_per_branch(prs_df)` — counts PRs per branch
-   - `label_feature_size(commit_file_changes_df, prs_df, pr_created_at_lookup)` — net-new lines per commit
-   - `label_refactor_size(commit_file_changes_df, prs_df, pr_created_at_lookup)` — lines modified per file
-   - `label_repo_status(prs_df)` — up-to-date / outdated based on `was_up_to_date_at_merge`
-   - `label_pr_status(prs_df)` — closed / still_open
-   - `label_merge_state(prs_df)` — delegated to `src.utils.label_merge.label_merge_state`
-6. Concatenate label DataFrames, sort, run `diagnose_timestamp_issues()` and save outputs.
+### Stage 2: CSV Enrichment
+Runs utility functions from [src/utils/enrich_columns.py](../src/utils/enrich_columns.py):
 
+| Function | Input CSV | Output Columns | Purpose |
+|----------|-----------|----------------|---------|
+| `add_top_file_metrics()` | `PR_commits.csv` + `commit_file_changes.csv` | `top_file`, `top_file_change_%` | Identifies which file consumed the most lines in each PR (useful for understanding scope) |
+| `add_docs_updated_flag()` | `commit_file_changes.csv` | `docs_updated` | Boolean flag if any file path contains "readme", "doc", or "docs" keywords |
+| `add_order_of_review()` | `review-comments.csv` | `order_of_review` | Ordinal sequence of reviews (e.g., 1st, 2nd, 3rd reviewer feedback) |
+
+### Stage 3: Data Cleaning
+- Extracts and normalizes usernames from comment author fields
+- Removes malformed or missing author entries
+- Overwrites original CSV files (backup originals if you need raw data)
+
+### Stage 4: Bot Filtering
+Uses [src/utils/botFilter.py](../src/utils/botFilter.py) to identify automated accounts:
+
+**Bot patterns detected:**
+- Names ending in `[bot]` (e.g., `dependabot[bot]`, `renovate[bot]`)
+- Names matching `bot-*`, `*-bot`, `*_bot` (e.g., `github-actions`, `stale[bot]`)
+- Known bots: `codecov`, `snyk-bot`, `whitesource`, `sonarcloud`, `netlify`, `vercel`, `coveralls`, `travis-ci`, `circleci`, `mergify`, etc.
+
+**What gets filtered:**
+- PRs authored by bots
+- Commits by bot accounts
+- Comments from bots (across multiple columns)
+
+**Why it matters:** Bot-generated PRs (e.g., dependency updates) skew statistics on team development. Filtering removes noise so metrics reflect actual human work.
+
+### Stage 5: Anonymization (Optional)
+If `ANONYMIZE=True`, applies [src/utils/anonymize_columns.py](../src/utils/anonymize_columns.py):
+- Replaces real usernames in `pr_author`, `merged_by`, `head_branch` with anonymized IDs
+- Loads mapping from `confidential/anonymized_usernames.json`
+- Applied case-insensitively (handles "Alice" → "user_001" even if JSON maps "alice")
+
+**Why it matters:** Protects individual privacy in research datasets; required for ethics/compliance.
+
+### Stage 6: Label Generation
+Runs labeling modules in [event_labelling/CodeStructure_Branching/](../event_labelling/CodeStructure_Branching/) (separate scripts for each label type):
+
+| Module | Function | Output Column | Logic |
+|--------|----------|----------------|-------|
+| [label_branch_names.py](../event_labelling/CodeStructure_Branching/label_branch_names.py) | `label_branch_names()` | `llm_output`, `llm_reasoning` | **LLM-based**: sends branch name + PR metadata to local Ollama model; parses confidence/prediction/reasoning from response. One row per unique branch name. |
+| [label_features_per_branch.py](../event_labelling/CodeStructure_Branching/label_features_per_branch.py) | `label_features_per_branch()` | `main_label` | Counts how many PRs used each branch. Labels: "one Features Per Branch" (1 PR) or "multiple Features Per Branch" (2+ PRs). One row per PR. |
+| [label_feature_size.py](../event_labelling/CodeStructure_Branching/label_feature_size.py) | `label_feature_size()` | `main_label` | Per-file: identifies pure-addition files (additions>0, deletions=0). Thresholds: <50 lines = "Small Feature Size", ≥50 lines = "Large Feature Size". One row per file. |
+| [label_refactor_size.py](../event_labelling/CodeStructure_Branching/label_refactor_size.py) | `label_refactor_size()` | `main_label` | Per-file: identifies any file with deletions (refactors). Thresholds: total modified lines <50 = "Small Refactor Size", ≥50 = "Large Refactor Size". One row per file. |
+| [label_repo_status.py](../event_labelling/CodeStructure_Branching/label_repo_status.py) | `label_repo_status()` | `main_label` | Checks `was_up_to_date_at_merge`: "up-to-date" (boolean true) or "outdated" (boolean false). One row per PR. |
+| [label_pr_status.py](../event_labelling/CodeStructure_Branching/label_pr_status.py) | `label_pr_status()` | `main_label` | Checks `state` and `merged_at` columns: "still_open" (state='open'), "merged" (state='closed' + merged_at set), or "closed" (state='closed' without merge). One row per PR. |
+| [src/utils/label_merge.py](../src/utils/label_merge.py) | `label_merge_state()` | `main_label` | Categorizes merge method. One row per merged PR. |
+| [clean_lable.py](../event_labelling/CodeStructure_Branching/clean_lable.py) (optional) | `create_clean_branching_label_csv()` | N/A (utility) | Post-processing script (note typo in filename: "lable" not "label"). Creates clean CSVs with only PR-level events, filtering out per-file Feature/Refactor Size details. Useful for reducing output size. Run manually if needed. |
+
+**LLM-based branch naming:** The script sends a structured prompt to the Ollama model for each branch, asking:
+```
+Assess if this branch name is meaningful and follows conventions.
+Branch: {branch_name}
+PR Title: {pr_title}
+Files Changed: {file_list}
+```
+
+The model responds with:
+```
+REASON: (explanation)
+PREDICTION: (meaningful/not_meaningful/unclear)
+CONFIDENCE: (0-100)
+```
+
+### Stage 7: Consolidation & Output
+- Concatenates all label DataFrames (one row per PR per label type)
+- Sorts by `created_at` timestamp
+- Runs `diagnose_timestamp_issues()` to flag missing/invalid timestamps
+- Saves to `data/graph_labels/`
 
 ## Outputs
 
-The scripts write per-team outputs to `data/graph_labels/` (directory is created if missing):
+Two CSV files per team in `data/graph_labels/`:
 
-- `{team_name}_labels_branching_and_structure.csv` — combined labels for that team
-- `{team_name}_llm_branch_name_reasoning.csv` — LLM reasoning rows produced from branch-name assessments
+| File | Rows | Purpose |
+|------|------|---------|
+| `{team}_labels_branching_and_structure.csv` | Multiple per PR (one per label type) | Combined event labels concatenating all label types. **Important**: This includes per-file Feature Size and Refactor Size labels, so row count >> PR count |
+| `{team}_llm_branch_name_reasoning.csv` | One per unique branch name | Detailed LLM reasoning for branch-name assessments (separate output from main labels file) |
+| `clean/{team}_labels_branching_and_structure.csv` (optional) | One per PR (max 7 rows/PR) | Clean version with only PR-level labels, generated by `clean_lable.py` if run |
+
+### Output Columns in Combined Labels File
+
+The main combined labels CSV contains:
+- `pr_id` — PR identifier
+- `pr_author` — (anonymized if ANONYMIZE=True)
+- `created_at` — PR creation timestamp (or merged_at for Merge State labels)
+- `branch_name` — head branch name (for branch-related labels)
+- `event` — specific label value (e.g., "Small Feature Size", "up-to-date", "still_open")
+- `main_label` — label category (Branch Name, Features Per Branch, Feature Size, Refactor Size, Repository Status, PR Status, Merge State)
+- `llm_output` — explanation (LLM-based for branch names, rule-based for others)
+- `llm_timestamp` — reproducible timestamp for the run
+
+**Key insight:** Because Feature Size and Refactor Size labels generate **one row per file**, the combined labels file has multiple rows per PR. Example: a 5-file PR with 3 feature files and 2 refactor files generates 5 size labels + labels for other categories. Use `clean_lable.py` to create PR-level-only output if needed.
 
 Example columns in the combined labels file:
 
-```csv
-pr_id,pr_author,created_at,branch_name,event,main_label,llm_output,llm_timestamp
-```
+## Important Implementation Details
+   project root and applied case-insensitively across selected columns (`pr_author`, `merged_by`, `head_branch`).
+**Feature vs Refactor Classification:**
+- **Feature Size**: Detects files with `additions > 0` AND `deletions == 0` (pure new code)
+- **Refactor Size**: Detects files with `deletions > 0` (any file touched, added, or deleted code)
+- A single file can be classified as feature or refactor (mutually exclusive per file)
 
+**Label Generation Notes:**
+- `enrich_prs_and_comments()` runs first (adds metadata columns to PRs)
+- Bot filtering and anonymization happen **before** label generation
+- Each labeling function runs independently and returns a DataFrame
+- All label DataFrames concatenated into one, sorted by PR ID and timestamp
+- `diagnose_timestamp_issues()` flags rows with missing `created_at` (useful for debugging)
+- Bot filtering and anonymization are performed using utilities from `src.utils`.
+## Common Debugging Scenarios
+- `MODEL_NAME` in the orchestration code defaults to `llama3.2:3b`; LLM requests go through
+| Symptom | Likely Cause | Solution |
+|---------|------------|----------|
+| "No team folders found" | Running from wrong directory | Run `python event_labelling/CodeStructure_Branching/main.py` from project root |
+| Missing required CSV columns error | Input CSVs from `scripts/app.py` don't match expected schema | Check [scripts/app.py](../scripts/app.py) output, verify column names match PR, commits, file changes CSVs |
+| LLM responses stuck or slow | Ollama daemon not running or model not loaded | `ollama serve` in separate terminal; verify with `curl http://localhost:11434/api/tags` |
+| Very few or zero "small" size labels | Thresholds miscalibrated for codebase | Feature <50 lines, Refactor <50 total lines modified. Check sample files to recalibrate if needed |
+| Timestamps missing in output | PR data lacks `created_at` or `merged_at` columns | Verify input CSVs have these columns; may need to re-extract from GitHub |
+| Anonymization not applied | `confidential/anonymized_usernames.json` missing or ANONYMIZE=False | Verify JSON file exists if ANONYMIZE=True; regenerate if needed |
+| Per-file size labels explosion (too many rows) | Expected behavior for large PRs | Use `clean_lable.py` to create PR-level-only output; filter to specific label types in downstream analysis |
+   `src.utils.ollama_offline.connect_ollama_offline` by default.
+## File Structure & Roles
+
+**Main orchestrator:**
+- `main.py` (279 lines) — discovers teams, runs enrichment→bot filtering→anonymization→labeling, saves outputs
+
+**Labeling modules:**
+- `label_branch_names.py` (261 lines) — LLM-based assessment of branch name meaningfulness
+- `label_features_per_branch.py` (60 lines) — counts PRs per branch
+- `label_feature_size.py` (50 lines) — classifies new-code files
+- `label_refactor_size.py` (60 lines) — classifies code-change files
+- `label_repo_status.py` (55 lines) — checks if branch was up-to-date at merge
+- `label_pr_status.py` (45 lines) — classifies PR lifecycle state
+
+**Utilities (imported from src.utils, not in this folder):**
+- `enrich_columns.py` — adds metadata (top_file, docs_updated, review order)
+- `botFilter.py` — removes bot PRs/commits
+- `anonymize_columns.py` — replaces usernames with IDs
+- `ollama_offline.py` — LLM interface
+- `label_merge.py` — categorizes merge method
+
+**Post-processing (optional):**
+- `clean_lable.py` (285 lines, note typo in filename) — filters to PR-level events, creates cleaner output. Run separately if needed: `python event_labelling/CodeStructure_Branching/clean_lable.py`
+## LLM behavior and parsing
 Notes:
 
 - `clean_review_comments()` (or equivalent utility) may overwrite `*_review-comments.csv` files in-place
@@ -120,8 +255,6 @@ Notes:
 - `MODEL_NAME` in the orchestration code defaults to `llama3.2:3b`; LLM requests go through
    `src.utils.ollama_offline.connect_ollama_offline` by default.
 
-## LLM behavior and parsing
-
 - Branch naming assessments are performed by `assess_branch_meaningfulness()` which sends a formatted prompt to `ask_llm`. The function attempts to parse `REASON`, `PREDICTION` and `CONFIDENCE` sections from the model output and falls back to defaults when parsing fails.
 
 ## Notes on running and debugging
@@ -131,8 +264,8 @@ Notes:
    provide mock responses or raise clear errors; see `src/utils/ollama_offline.py` for details.
 - Teams missing required CSVs are skipped with a printed warning; inspect logs to determine
    which folders need additional data.
-- For deeper debugging add logging or `print()` statements inside `src.utils` helpers or in
-   `main.py` / `code_structure_and_branching.py` — both scripts print discovery and output paths.
+ - For deeper debugging add logging or `print()` statements inside `src.utils` helpers or in
+   `main.py` — the orchestration script prints discovery and output paths.
 
 ## Functions referenced (high-level)
 
