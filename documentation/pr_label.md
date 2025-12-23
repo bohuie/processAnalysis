@@ -1,6 +1,6 @@
-# PR Labeling — Comprehensive Reference (`event_labelling/PR/pr_label.md`)
+# PR Labeling
 
-This document describes the **PR labeling system** in `event_labelling/PR/`. The tooling processes extracted GitHub pull request data (PRs, commits, and review comments) to generate **PR communication labels** used for research on review quality, merge practices, and documentation clarity.
+This document describes the **PR labeling system** in `event_labelling/PR/`. The tooling processes extracted GitHub pull request data (PRs, commits, and review comments) to generate **PR labels** used for research on review quality, merge practices, and documentation clarity.
 
 Primary entry point: `event_labelling/PR/pr_label.py` (run as a module). 
 
