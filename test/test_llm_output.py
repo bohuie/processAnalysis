@@ -237,7 +237,7 @@ def test_branch_assessment():
 
 if __name__ == "__main__":
     print("Starting LLM Output Tests...")
-    print("Note: This requires Ollama to be running with the model specified in code_structure_and_branching.py")
+    print("Note: This requires Ollama to be running with the model specified in event_labelling/CodeStructure_Branching/main.py")
     print()
     
     results = test_branch_assessment()
