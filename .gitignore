@@ -22,10 +22,6 @@ data/*
 venv/
 
 # Ignore specific files
-<<<<<<< HEAD
 confidential/
 .DS_Store
 **/.DS_Store
-=======
-confidential/
->>>>>>> origin/main
