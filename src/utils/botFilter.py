@@ -48,6 +48,8 @@ DEFAULT_BOT_PATTERNS = [
     r'travis-ci',             # Travis CI bot
     r'circleci',              # CircleCI bot
     r'jenkins',               # Jenkins bot
+    r'logs',                  # Logs bot
+    r'blogs',                 # Blogs bot
 ]
 
 

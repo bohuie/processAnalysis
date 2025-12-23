@@ -8,7 +8,7 @@ import numpy as np
 def _filter_by_valid_pr_ids(
     commits_df: pd.DataFrame,
     prs_df: pd.DataFrame,
-    review_comments_df: pd.DataFrame | None = None,
+    review_comments_df: Union[pd.DataFrame, None] = None,
 ):
     """Keep only PRs/comments whose pr_id appears in commits_df."""
     for name, df in [("commits", commits_df), ("prs", prs_df)]:
@@ -88,15 +88,17 @@ def add_top_file_metrics(team_folder: Union[Path, str]) -> None:
     all_csvs = list(team_folder.glob("*.csv"))
     commits_path = next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
     prs_path = next((f for f in all_csvs if f.name.endswith("_all_pull_requests.csv")), None)
+    file_changes_path = next((f for f in all_csvs if f.name.endswith("_commit_file_changes.csv")), None)
 
-    if not all([commits_path, prs_path]):
-        print(f"[WARN] Missing commits or PR CSV for {team_name}, skipping top_file enrichment.")
+    if not all([commits_path, prs_path, file_changes_path]):
+        print(f"[WARN] Missing commits, PR, or file_changes CSV for {team_name}, skipping top_file enrichment.")
         return
 
-    print("[INFO] Loading commits and PRs...")
+    print("[INFO] Loading commits, PRs, and file changes...")
     commits_df = pd.read_csv(commits_path)
     prs_df = pd.read_csv(prs_path)
-    print(f"[INFO] Commits loaded: {len(commits_df)}, PRs loaded: {len(prs_df)}")
+    file_changes_df = pd.read_csv(file_changes_path)
+    print(f"[INFO] Commits loaded: {len(commits_df)}, PRs loaded: {len(prs_df)}, File changes loaded: {len(file_changes_df)}")
 
     prs_df, _ = _filter_by_valid_pr_ids(commits_df, prs_df, None)
 
@@ -108,7 +110,7 @@ def add_top_file_metrics(team_folder: Union[Path, str]) -> None:
 
     print("[INFO] Calculating top file metrics per PR...")
     top_file_info = (
-        commits_df
+        file_changes_df
         .groupby("pr_id", group_keys=False)
         .apply(_compute_top_file_for_group)
         .reset_index()
@@ -139,26 +141,28 @@ def add_docs_updated_flag(team_folder: Union[Path, str]) -> None:
     all_csvs = list(team_folder.glob("*.csv"))
     commits_path = next((f for f in all_csvs if f.name.endswith("_PR_commits.csv")), None)
     prs_path = next((f for f in all_csvs if f.name.endswith("_all_pull_requests.csv")), None)
+    file_changes_path = next((f for f in all_csvs if f.name.endswith("_commit_file_changes.csv")), None)
 
-    if not all([commits_path, prs_path]):
-        print(f"[WARN] Missing commits or PR CSV for {team_name}, skipping docs_updated enrichment.")
+    if not all([commits_path, prs_path, file_changes_path]):
+        print(f"[WARN] Missing commits, PR, or file_changes CSV for {team_name}, skipping docs_updated enrichment.")
         return
 
-    print("[INFO] Loading commits and PRs...")
+    print("[INFO] Loading commits, PRs, and file changes...")
     commits_df = pd.read_csv(commits_path)
     prs_df = pd.read_csv(prs_path)
-    print(f"[INFO] Commits loaded: {len(commits_df)}, PRs loaded: {len(prs_df)}")
+    file_changes_df = pd.read_csv(file_changes_path)
+    print(f"[INFO] Commits loaded: {len(commits_df)}, PRs loaded: {len(prs_df)}, File changes loaded: {len(file_changes_df)}")
 
     prs_df, _ = _filter_by_valid_pr_ids(commits_df, prs_df, None)
 
     # Compute docs_updated per PR
-    if "file_path" not in commits_df.columns:
-        print("[WARN] 'file_path' column missing in commits; cannot compute docs_updated.")
+    if "file_path" not in file_changes_df.columns:
+        print("[WARN] 'file_path' column missing in file_changes; cannot compute docs_updated.")
         return
 
     print("[INFO] Calculating docs_updated flag per PR...")
     docs_df = (
-        commits_df.groupby("pr_id")
+        file_changes_df.groupby("pr_id")
         .apply(_compute_docs_updated_for_group)
         .reset_index()
         .rename(columns={0: "docs_updated"})
