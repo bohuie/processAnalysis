@@ -38,3 +38,13 @@ The script aggregates these into team-level rows and generates project-level sum
 - The analysis module is flexible with column names (it includes mapping utilities to support variations such as `lines_added` vs `additions`).
 - If a team folder is missing required files, it will be skipped with a warning and processing will continue for other teams.
 - This module is intended to consume cleaned/enriched CSVs created by the extraction and labeling pipeline.
+
+## Notes specific to `analysis.py`
+
+- `analysis.py` writes outputs into `data/analysis/` (the script creates the folder if it doesn't exist).
+- The script contains utilities to normalize column name variations and will try common alternatives
+  for `lines_added`, `lines_deleted` and `files_changed` — this makes it resilient to small
+  differences in extractor output.
+- If `data/csv/` has no team folders matching `year-long-project-team-*` the script will raise a
+  `FileNotFoundError`; for incremental work you can comment that check or point `DATA_FOLDER` to a
+  subset folder for local testing.
