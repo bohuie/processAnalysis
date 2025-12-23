@@ -1,719 +1,124 @@
-# Code Structure and Branching Labeling Script
+# Code Structure & Branching — Script Reference
 
-## Overview
+This document reflects the current behaviour of `event_labelling/CodeStructure_Branching/code_structure_and_branching.py` (refactor branch). It describes inputs, configuration, main processing steps, and outputs produced by `process_all_teams()`.
 
-Comprehensive pipeline for processing GitHub repository data across multiple team projects. Integrates data cleaning, enrichment, LLM-based labeling, and anonymization into a unified workflow.
+## Summary
 
-## Features
+- Cleans review comments (extracts usernames from dict-like fields)
+- Enriches PRs with top-file metrics and a docs-updated flag
+- Adds `order_of_review` to review comments
+- Removes bot PRs/commits using utilities in `src.utils.botFilter`
+- Optionally anonymizes authors and branch-name username components
+- Generates event labels (branch naming, feature/refactor sizes, repo/pr/merge status)
+- Saves labels and LLM reasoning to `data/graph_labels/`
 
-- Review comment cleaning and username extraction
-- PR and commit data enrichment
-- Bot filtering
-- Timestamp normalization to UTC
-- Branch name imputation
-- LLM-powered code structure analysis
-- Multi-dimensional event labeling
-- Author anonymization support
-- Automated file organization
+## Key Requirements
 
-## Prerequisites
+- Python 3.8+ (project uses `pyenv` in development)
+- Core dependencies: `pandas`, `tqdm`, `python-dateutil` (see `requirements.txt`)
+- Local Ollama instance for LLM assessments (optional if `connect_ollama_offline` is a no-op)
 
-### Required Libraries
+Quick install (example):
 ```bash
-pip install pandas numpy ollama python-dateutil tqdm
+python -m pip install -r requirements.txt
+# If you use Ollama locally:
+# ollama serve
+# ollama pull llama3.2:3b
 ```
 
-### Ollama Setup
+## Where to run
+
+Run the script from the project root (repository root is assumed):
+
 ```bash
-# Install Ollama from https://ollama.ai
-
-# Pull required model
-ollama pull llama3.2:3b
+python event_labelling/CodeStructure_Branching/code_structure_and_branching.py
 ```
 
-### Directory Structure
-```
-project/
-├── data/
-│   └── csv/
-│       ├── year-long-project-team-1/
-│       │   ├── team-1_all_pull_requests.csv
-│       │   ├── team-1_PR_commits.csv
-│       │   ├── team-1_commit_file_changes.csv
-│       │   └── team-1_review-comments.csv
-│       └── year-long-project-team-2/
-│           └── [similar structure]
-└── confidential/
-    └── anonymized_usernames.json
-```
+## Directory expectations
 
-## Configuration
+The script expects team CSV folders under `data/csv/` using the pattern `year-long-project-team-*`.
 
-### Global Settings
-```python
-MODEL_NAME = "llama3.2:3b"          # Ollama model for LLM tasks
-ANONYMIZE = True                     # Enable/disable anonymization
+Example structure:
+
+```
+data/csv/
+└── year-long-project-team-1/
+   ├── year-long-project-team-1_all_pull_requests.csv
+   ├── year-long-project-team-1_PR_commits.csv
+   ├── year-long-project-team-1_commit_file_changes.csv
+   └── year-long-project-team-1_review-comments.csv
 ```
 
-### Anonymization Setup
+An anonymization mapping (optional) is loaded from `confidential/anonymized_usernames.json` relative to the project root. If present, the `ANONYMIZE` global flag controls whether anonymization is applied.
 
-Create mapping file at `../../confidential/anonymized_usernames.json`:
-```json
-{
-  "RealName1": "Student1",
-  "RealName2": "Student2",
-  "real.email@domain.com": "Student3"
-}
-```
+## Main Configuration (script-level)
 
-## Usage
-```bash
-python combined_pipeline.py
-```
+Key module-level constants in the script:
 
-## Pipeline Stages
+- `MODEL_NAME` — LLM model identifier used by the local `ask_llm` wrapper (default: `llama3.2:3b`)
+- `RUN_TIMESTAMP` — ISO timestamp used in label outputs
+- `ANONYMIZE` — boolean flag to enable anonymization
 
-### Stage 1: Cleaning and Enrichment
+The code uses the helper `connect_ollama_offline` from `src.utils.ollama_offline` for LLM calls.
 
-#### 1.1 Review Comment Cleaning
+## Processing stages (what the script does)
 
-**Function:** `clean_review_comments(team_folder)`
+1. Discover all team folders under `data/csv/`.
+2. For each team: run `clean_review_comments(team_folder)` to extract usernames from `author` fields in review comments and overwrite the CSV with cleaned author values.
+3. Run `enrich_prs_and_comments(team_folder)`, which delegates enrichment to utility functions in `src.utils.enrich_columns`:
 
-Extracts usernames from dictionary-formatted author fields and normalizes timestamps.
+   - `add_top_file_metrics(team_folder)` — computes `top_file` and `top_file_change_%` on PR CSVs
+   - `add_docs_updated_flag(team_folder)` — sets `docs_updated` if docs changed
+   - `add_order_of_review(team_folder)` — adds `order_of_review` to review comments
 
-**Process:**
-- Locates review-comments.csv files
-- Extracts usernames from dict format: `{'username': 'name'}` → `name`
-- Converts timestamps to UTC Z format
-- Overwrites original files with cleaned data
+4. Load required CSVs (`*_all_pull_requests.csv`, `*_PR_commits.csv`, `*_commit_file_changes.csv`), filter bots using `src.utils.botFilter`, optionally anonymize, and prepare timestamp lookups.
 
-**Expected Input:**
+5. Generate labels via functions in the same file:
+
+   - `label_branch_names(prs_df)` — LLM-based branch-name assessment (uses `assess_branch_meaningfulness`)
+   - `label_features_per_branch(prs_df)` — counts PRs per branch
+   - `label_feature_size(commit_file_changes_df, prs_df, pr_created_at_lookup)` — net-new lines per commit
+   - `label_refactor_size(commit_file_changes_df, prs_df, pr_created_at_lookup)` — lines modified per file
+   - `label_repo_status(prs_df)` — up-to-date / outdated based on `was_up_to_date_at_merge`
+   - `label_pr_status(prs_df)` — closed / still_open
+   - `label_merge_state(prs_df)` — delegated to `src.utils.label_merge.label_merge_state`
+6. Concatenate label DataFrames, sort, run `diagnose_timestamp_issues()` and save outputs.
+
+## Outputs
+
+The script writes per-team outputs to `data/graph_labels/`:
+
+- `{team_name}_labels_branching_and_structure.csv` — combined labels for that team
+- `{team_name}_llm_branch_name_reasoning.csv` — LLM reasoning rows produced from branch-name assessments
+
+Example columns in the combined labels file:
+
 ```csv
-pr_id,author,created_at,comment_body
-1,{'username': 'john'},2024-01-15T10:30:00,Great work
+pr_id,pr_author,created_at,branch_name,event,main_label,llm_output,llm_timestamp
 ```
 
-**Output:**
-```csv
-pr_id,author,created_at,comment_body
-1,john,2024-01-15T10:30:00Z,Great work
-```
+Notes:
 
-#### 1.2 PR and Commit Enrichment
+- `clean_review_comments()` overwrites `*_review-comments.csv` files in-place after extraction of usernames.
+- The anonymization mapping (if present) is loaded from `confidential/anonymized_usernames.json` in the project root and applied with case-insensitive replacement across selected columns (`pr_author`, `merged_by`, `head_branch`).
+- Bot filtering and anonymization are performed using utilities from `src.utils`.
 
-**Function:** `enrich_prs_and_comments(team_folder)`
+## LLM behavior and parsing
 
-Adds computed metrics to PR and review comment data.
+- Branch naming assessments are performed by `assess_branch_meaningfulness()` which sends a formatted prompt to `ask_llm`. The function attempts to parse `REASON`, `PREDICTION` and `CONFIDENCE` sections from the model output and falls back to defaults when parsing fails.
 
-**Enrichments Added to PRs:**
-- `top_file`: File with most changes in the PR
-- `top_file_change_%`: Percentage of total PR changes in top file
-- `docs_updated`: Boolean indicating if documentation was modified
+## Notes on running and debugging
 
-**Enrichments Added to Comments:**
-- `order_of_review`: Classification as "first", "second", or "additional"
+- Run the script from the repository root so the relative paths resolve correctly.
+- If you do not run an Ollama instance, ensure `connect_ollama_offline` is implemented to either mock responses or fail gracefully.
+- If files are missing in a team folder, the team is skipped with a warning.
 
-**Process:**
-1. Filters PRs and comments to only include those with commits
-2. Groups commits by PR and calculates file-level statistics
-3. Identifies top changed file per PR
-4. Ranks review comments chronologically per PR
+## Functions referenced (high-level)
 
-### Stage 2: Label Generation
-
-#### 2.1 Bot Filtering
-
-Automatically removes bot-generated PRs and commits using pattern matching.
-
-**Filtered Patterns:**
-- `[bot]` suffix
-- `bot-` prefix or `-bot` suffix
-- Specific bots: dependabot, github-actions, renovate, greenkeeper, codecov, snyk-bot, github-classroom
-
-#### 2.2 Timestamp Normalization
-
-**Function:** `normalize_timestamp_to_utc_z(timestamp_str)`
-
-Converts all timestamps to UTC with Z suffix format.
-
-**Examples:**
-```
-2024-01-15T10:30:00-08:00  →  2024-01-15T18:30:00Z
-2024-01-15T10:30:00        →  2024-01-15T10:30:00Z
-```
-
-#### 2.3 Event Labeling
-
-Generates seven dimensions of labels for repository events.
-
-##### Features Per Branch
-
-**Labels:** `one Features Per Branch`, `multiple Features Per Branch`
-
-**Logic:** Counts PRs per branch
-
-**Example:**
-- Branch "feature/login" with 1 PR → "one Features Per Branch"
-- Branch "develop" with 5 PRs → "multiple Features Per Branch"
-
-##### Branch Name Quality
-
-**Labels:** `Meaningful Branch Name`, `Random Branch Name`
-
-**Logic:** LLM evaluates if branch name reflects PR purpose
-
-**Auto-labeled:** main/master → "Random Branch Name"
-
-**LLM Assessed Examples:**
-- Meaningful: feature/authentication, fix/navbar-bug, refactor_api
-- Random: test, final, update, misc, newbranch
-
-##### Feature Size
-
-**Labels:** `Small Feature Size`, `Large Feature Size`
-
-**Logic:** Net new lines per commit (additions - deletions, when additions > deletions)
-
-**Threshold:** 50 lines
-- Less than 50 → Small
-- 50 or more → Large
-
-##### Refactor Size
-
-**Labels:** `Small Refactor Size`, `Large Refactor Size`
-
-**Logic:** Total modified lines per file (additions + deletions)
-
-**Threshold:** 50 lines
-- Less than 50 → Small
-- 50 or more → Large
-
-##### Repository Status
-
-**Labels:** `up-to-date`, `outdated`
-
-**Logic:** Based on `was_up_to_date_at_merge` column
-- True → "up-to-date"
-- False → "outdated"
-
-##### PR Status
-
-**Labels:** `closed`, `still_open`, `merged`
-
-**Logic:** Based on `state` column
-- "open" → "still_open"
-- "closed" → "closed"
-
-##### Merge State
-
-**Labels:** `no_merge`, `self_merge`, `reviewed_merge`
-
-**Logic:**
-- No `merged_at` → "no_merge"
-- `merged_by` equals `pr_author` → "self_merge"
-- `merged_by` differs from `pr_author` → "reviewed_merge"
-
-#### 2.4 Timestamp Adjustment
-
-**Function:** `adjust_merge_timestamps(combined_df)`
-
-Ensures merge events occur chronologically after the last commit.
-
-**Priority:**
-1. Use `merged_at` timestamp if available
-2. Use last commit timestamp + 1 second
-
-### Stage 3: Post-Processing
-
-#### 3.1 Branch Name Cleaning
-
-**Function:** `clean_and_impute_branch_names(input_path, output_path)`
-
-Fills missing branch names using PR ID mapping.
-
-**Process:**
-1. Converts PR IDs to consistent integer format
-2. Creates mapping of PR ID → branch name
-3. Fills missing values using the mapping
-4. Saves cleaned data to clean/ subdirectory
-
-#### 3.2 Anonymization
-
-Applied to three data points if enabled:
-- PR authors
-- Commit authors
-- Branch names (username components)
-
-**Process:**
-- Case-insensitive pattern matching
-- Replaces all occurrences of real names with anonymized versions
-- Applied across all output files
-
-## Output Files
-
-### Primary Outputs
-
-#### Event Labels CSV
-
-**Location:** `data/csv/code_structure_branching_labels_{team_name}_anonymized.csv`
-
-**Columns:**
-- `pr_id`: Pull request identifier
-- `pr_author`: Author username (anonymized if enabled)
-- `created_at`: Event timestamp (UTC Z format)
-- `branch_name`: Branch name (anonymized if enabled)
-- `event`: Specific event label
-- `main_label`: Event category
-- `llm_output`: Reasoning or calculation details
-- `llm_timestamp`: When label was generated
-
-**Example:**
-```csv
-pr_id,pr_author,created_at,branch_name,event,main_label,llm_output
-1,Student1,2024-01-15T10:30:00Z,feature/login,Meaningful Branch Name,Branch Name,LLM: clearly relates to authentication
-1,Student1,2024-01-15T10:30:00Z,feature/login,Small Feature Size,Feature Size,rule-based: 35 feature lines
-```
-
-#### LLM Reasoning CSV
-
-**Location:** `data/csv/{team_name}/graphs/reasoning/{team_name}_all_llm_reasoning_anonymized.csv`
-
-Contains detailed LLM reasoning for branch name assessments.
-
-**Columns:**
-- `pr_id`
-- `pr_author`
-- `created_at`
-- `branch_name`
-- `pr_title`
-- `pr_description`
-- `branch_naming_label`
-- `llm_reasoning`
-- `llm_timestamp`
-
-#### Cleaned Labels CSV
-
-**Location:** `data/csv/clean/code_structure_branching_labels_{team_name}_anonymized.csv`
-
-Version with imputed branch names.
-
-### Modified Input Files
-
-The pipeline modifies original files in place:
-
-#### Enriched PRs
-
-**Modified:** `{team_name}_all_pull_requests.csv`
-
-**Added Columns:**
-- `top_file`
-- `top_file_change_%`
-- `docs_updated`
-
-#### Enriched Review Comments
-
-**Modified:** `{team_name}_review-comments.csv`
-
-**Added Columns:**
-- `order_of_review`
-
-**Cleaned:**
-- `author` (username extraction)
-- `created_at` (UTC Z format)
-
-## Function Reference
-
-### Data Cleaning Functions
-
-#### clean_review_comments(team_folder)
-
-Cleans review comment files by extracting usernames and normalizing timestamps.
-
-**Parameters:**
-- `team_folder` (Path): Team directory containing CSV files
-
-#### enrich_prs_and_comments(team_folder)
-
-Adds computed metrics to PR and review comment data.
-
-**Parameters:**
-- `team_folder` (Path): Team directory containing CSV files
-
-#### clean_and_impute_branch_names(input_path, output_path)
-
-Imputes missing branch names based on PR ID mapping.
-
-**Parameters:**
-- `input_path` (str): Path to input CSV
-- `output_path` (str): Path to output CSV
-
-### Timestamp Functions
-
-#### normalize_timestamp_to_utc_z(timestamp_str)
-
-Converts any timestamp format to UTC with Z suffix.
-
-**Parameters:**
-- `timestamp_str` (str): Timestamp in any format
-
-**Returns:**
-- str: Normalized timestamp (YYYY-MM-DDTHH:MM:SSZ)
-
-#### adjust_merge_timestamps(combined_df)
-
-Adjusts merge event timestamps for chronological ordering.
-
-**Parameters:**
-- `combined_df` (DataFrame): Combined events dataframe
-
-**Returns:**
-- DataFrame: Updated dataframe
-
-### Branch Processing Functions
-
-#### get_unique_branch_names(prs_df)
-
-Extracts unique branch names from PR data.
-
-**Parameters:**
-- `prs_df` (DataFrame): Pull requests dataframe
-
-**Returns:**
-- list: Unique branch names
-
-#### get_branch_pr_mapping(prs_df)
-
-Creates mapping of branch names to PR information.
-
-**Parameters:**
-- `prs_df` (DataFrame): Pull requests dataframe
-
-**Returns:**
-- dict: Mapping of branch names to list of PR details
-
-### Anonymization Functions
-
-#### load_anonymization_mapping()
-
-Loads anonymization mapping from JSON file.
-
-**Returns:**
-- dict: Mapping of real names to anonymized names
-
-#### anonymize_column(series, mapping)
-
-Anonymizes a pandas Series using the mapping.
-
-**Parameters:**
-- `series` (Series): Data to anonymize
-- `mapping` (dict): Name mapping
-
-**Returns:**
-- Series: Anonymized data
-
-#### anonymize_branch_names(series, mapping)
-
-Anonymizes branch names by replacing username components.
-
-**Parameters:**
-- `series` (Series): Branch names
-- `mapping` (dict): Name mapping
-
-**Returns:**
-- Series: Anonymized branch names
-
-### LLM Functions
-
-#### ask_ollama(prompt)
-
-Sends classification prompt to local Ollama instance.
-
-**Parameters:**
-- `prompt` (str): Classification prompt
-
-**Returns:**
-- str: LLM response
-
-#### assess_branch_meaningfulness(branch_name, pr_title, pr_description)
-
-Evaluates if branch name is meaningful using LLM.
-
-**Parameters:**
-- `branch_name` (str): Branch name to assess
-- `pr_title` (str): PR title for context
-- `pr_description` (str): PR description for context
-
-**Returns:**
-- tuple: (label, llm_output)
-
-### Labeling Functions
-
-#### label_features_per_branch(prs_df)
-
-Generates features per branch labels.
-
-**Parameters:**
-- `prs_df` (DataFrame): Pull requests dataframe
-
-**Returns:**
-- DataFrame: Labeled events
-
-#### label_branch_names(prs_df)
-
-Generates branch name quality labels using LLM.
-
-**Parameters:**
-- `prs_df` (DataFrame): Pull requests dataframe
-
-**Returns:**
-- tuple: (labels_df, llm_reasoning_df)
-
-#### label_feature_size(commits_df, prs_df, pr_created_at_lookup)
-
-Generates feature size labels per commit.
-
-**Parameters:**
-- `commits_df` (DataFrame): Commits dataframe
-- `prs_df` (DataFrame): Pull requests dataframe
-- `pr_created_at_lookup` (dict): PR ID to timestamp mapping
-
-**Returns:**
-- DataFrame: Labeled events
-
-#### label_refactor_size(commits_df, prs_df, pr_created_at_lookup)
-
-Generates refactor size labels per file.
-
-**Parameters:**
-- `commits_df` (DataFrame): Commits dataframe
-- `prs_df` (DataFrame): Pull requests dataframe
-- `pr_created_at_lookup` (dict): PR ID to timestamp mapping
-
-**Returns:**
-- DataFrame: Labeled events
-
-#### label_repo_status(prs_df)
-
-Generates repository status labels.
-
-**Parameters:**
-- `prs_df` (DataFrame): Pull requests dataframe
-
-**Returns:**
-- DataFrame: Labeled events
-
-#### label_pr_status(prs_df)
-
-Generates PR status labels.
-
-**Parameters:**
-- `prs_df` (DataFrame): Pull requests dataframe
-
-**Returns:**
-- DataFrame: Labeled events
-
-#### label_merge_state(prs_df)
-
-Generates merge state labels.
-
-**Parameters:**
-- `prs_df` (DataFrame): Pull requests dataframe
-
-**Returns:**
-- DataFrame: Labeled events
-
-### Diagnostic Functions
-
-#### diagnose_timestamp_issues(df)
-
-Checks for timestamp issues in dataframe.
-
-**Parameters:**
-- `df` (DataFrame): Dataframe to check
-
-**Output:** Prints diagnostic information
-
-### Main Processing
-
-#### process_all_teams()
-
-Main orchestration function that runs the entire pipeline.
-
-**Process:**
-1. Locates team folders
-2. Cleans review comments
-3. Enriches PR and comment data
-4. Filters bots
-5. Normalizes timestamps
-6. Generates all labels
-7. Adjusts merge timestamps
-8. Applies anonymization
-9. Saves outputs
-10. Cleans branch names
-
-## Example Output
-```
-======================================================================
-STEP 1: CLEANING AND ENRICHING FILES
-======================================================================
-
-======================================================================
-[INFO] Processing: year-long-project-team-1
-======================================================================
-
-[INFO] Cleaning: year-long-project-team-1_review-comments.csv
-[INFO] Sample before → after:
-   {'username': 'john'}  →  john
-   {'username': 'jane'}  →  jane
-[INFO] Converting 'created_at' to UTC Z format (if needed)...
-[SUCCESS] Overwritten cleaned file: year-long-project-team-1_review-comments.csv
-
-======================================================================
-[INFO] Enriching data for: year-long-project-team-1
-======================================================================
-[INFO] Loading input CSVs...
-[INFO] Commits loaded: 245, PRs loaded: 52, Comments loaded: 123
-[INFO] Filtered PRs: 52 → 52
-[INFO] Filtered review comments: 123 → 123
-[INFO] Calculating top file metrics per PR...
-[INFO] Calculating order_of_review for review comments...
-[SUCCESS] Updated PRs saved to: year-long-project-team-1_all_pull_requests.csv
-[SUCCESS] Updated review comments saved to: year-long-project-team-1_review-comments.csv
-
-======================================================================
-[COMPLETE] All review comments cleaned and files enriched
-======================================================================
-
-======================================================================
-STEP 2: GENERATING LABELS
-======================================================================
-
-============================================================
-Processing year-long-project-team-1...
-============================================================
-Found commits file: year-long-project-team-1_commit_file_changes.csv
-   Using file-level commit data (best for granular analysis)
-Loading PRs from: year-long-project-team-1_all_pull_requests.csv
-[INFO] Filtered out 3 bot PRs
-[INFO] Created timestamp lookup for 49 PRs
-[INFO] Processing 15 unique branch names across 49 PRs
-Anonymizing PR authors...
-Anonymizing branch names...
-Loading commits from: year-long-project-team-1_commit_file_changes.csv
-[INFO] Filtered out 5 bot commits
-Anonymizing commit authors...
-
-Generating Code Structure / Branching Labels...
-  - Features per branch (one, multiple)...
-    Found 2 branches used by multiple PRs
-      'develop': 3 PRs
-    Generated 49 events
-  - Branch names (meaningful, random)...
-  Evaluating branch naming via Ollama...
-  Branch naming: 100%|████████████████| 15/15 [00:45<00:00,  3.02s/it]
-    Generated 49 events
-  - Feature size (small, large)...
-    Generated 178 events
-  - Refactor size (small, large)...
-    Generated 542 events
-  - Repository status (up-to-date, outdated)...
-Generating repository status labels based on 'was_up_to_date_at_merge'...
-Generated 45 repository status labels
-    Generated 45 events
-  - PR status (closed, still_open)...
-    Generated 49 events
-  - Merge state (no_merge, self-merge, reviewed_merge)...
-    Generated 49 events
-  Adjusting merge event timestamps for chronological ordering...
-    Adjusted 45 merge event timestamps
-
-All 961 events have valid timestamps
-
-Saved combined event labels to: code_structure_branching_labels_year-long-project-team-1_anonymized.csv
-Anonymized authors in output:
-   Student1: 234 events
-   Student2: 198 events
-   Student3: 156 events
-   Student4: 145 events
-   Student5: 228 events
-Saved LLM reasoning data to: year-long-project-team-1/graphs/reasoning/year-long-project-team-1_all_llm_reasoning_anonymized.csv
-
-Cleaning branch names...
-Loading data from code_structure_branching_labels_year-long-project-team-1_anonymized.csv...
-Found 15 records with missing branch_name initially.
---------------------------------------------------
-Cleaning complete.
--> Successfully imputed 15 missing branch names based on matching pr_id.
--> The cleaned data is saved to: data/csv/clean/code_structure_branching_labels_year-long-project-team-1_anonymized.csv
-
-============================================================
-ALL TEAMS PROCESSED
-============================================================
-Anonymization was ENABLED for all outputs
-============================================================
-```
-
-## Error Handling
-
-The pipeline includes comprehensive error handling:
-- Skips teams with missing required files
-- Continues processing after individual errors
-- Reports detailed error messages with context
-- Validates data integrity at each stage
-
-## Performance Notes
-
-- LLM calls for branch naming: ~3 seconds per branch
-- Total processing time: 5-15 minutes per team (varies with PR count)
-- Memory usage: Moderate (processes one team at a time)
-
-## Troubleshooting
-
-### No team folders found
-
-**Issue:** Pipeline finds no teams to process
-
-**Solution:** Verify directory structure matches expected format with `year-long-project-team-*` pattern
-
-### Missing required files
-
-**Issue:** Team skipped due to missing CSV files
-
-**Solution:** Ensure each team folder contains:
-- `*_all_pull_requests.csv`
-- `*_PR_commits.csv` or `*_commit_file_changes.csv`
-- `*_review-comments.csv`
-
-### Ollama connection error
-
-**Issue:** LLM calls fail with connection error
-
-**Solution:**
-```bash
-# Ensure Ollama is running
-ollama serve
-
-# Verify model is available
-ollama list
-```
-
-### Anonymization not applied
-
-**Issue:** Output contains real names despite ANONYMIZE=True
-
-**Solution:** Verify mapping file exists at `../../confidential/anonymized_usernames.json` and contains valid JSON
-
-### Timestamp parsing errors
-
-**Issue:** Timestamps not normalized correctly
-
-**Solution:** Check input CSV timestamp format. Pipeline supports ISO 8601 formats but may fail on non-standard formats
-
-## Notes
-
-- Original PR and comment CSV files are modified in place
-- Event labels and cleaned labels are saved to new files
-- Bot filtering is automatic and cannot be disabled
-- Anonymization applies to all text fields containing usernames
-- LLM assessments are cached per unique branch name
-- Pipeline is idempotent (can be run multiple times safely)
+- `clean_review_comments(team_folder)` — extract usernames from review comments and normalize formatting
+- `enrich_prs_and_comments(team_folder)` — delegates enrichment to utilities in `src.utils.enrich_columns`
+- `label_branch_names(prs_df)` — LLM-based branch-name labeling
+- `label_features_per_branch(prs_df)` — features per branch
+- `label_feature_size(...)`, `label_refactor_size(...)` — code/feature size heuristics
+- `label_repo_status(prs_df)`, `label_pr_status(prs_df)` — repo and PR status labels
+- `process_all_teams()` — main orchestration function

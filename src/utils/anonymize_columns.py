@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Iterable, Tuple, Any, Dict
+from typing import Iterable, Tuple, Any, Dict, Optional
 import json
 import re
 
@@ -107,7 +107,7 @@ def anonymize_author_columns(
 
 def anonymize_column(
     series: pd.Series,
-    mapping: Dict[str, str] | None = None,
+    mapping: Optional[Dict[str, str]] = None,
 ) -> pd.Series:
     """
     Anonymize occurrences of real usernames inside a generic text column.
@@ -127,7 +127,7 @@ def anonymize_column(
 
 def anonymize_branch_names(
     series: pd.Series,
-    mapping: Dict[str, str] | None = None,
+    mapping: Optional[Dict[str, str]] = None,
 ) -> pd.Series:
     """
     Anonymize branch names by replacing username parts within the full branch string.
