@@ -1,50 +1,100 @@
 # Analysis Script — Summary
 
-This analysis module computes team- and PR-level summary statistics from the CSV artifacts produced by the extractor and enrichment pipeline. It expects team folders under `data/csv/` following the `year-long-project-team-*` pattern and looks for the standard CSVs the pipeline produces (pull requests, commits, commit_file_changes, review-comments).
+This document explains what `analysis.py` does and how to run it. The script computes team-level and PR-level summary statistics from CSV artifacts produced by the extraction and enrichment pipeline. It is intended to be run from the repository root and expects per-team folders under `data/csv/` that follow the `year-long-project-team-*` pattern.
 
-## Quick setup
+## Requirements
 
-Install dependencies:
+- Python 3.8+ (project uses standard data-science libraries)
+- Key packages: `pandas`, `numpy` (install via `pip install -r requirements.txt`)
+
+## How to run
+
+From the project root:
 
 ```bash
-python -m pip install -r requirements.txt
+python analysis.py
 ```
 
-## Expected input layout
+The script creates `data/analysis/` and writes CSV outputs there. It prints progress to console and displays summary statistics at the end.
 
-The analysis script expects the common pipeline filenames inside each team folder, for example:
+## What the script expects (inputs)
 
-```
-data/csv/year-long-project-team-1/
-  ├─ year-long-project-team-1_all_pull_requests.csv
-  ├─ year-long-project-team-1_PR_commits.csv
-  ├─ year-long-project-team-1_commit_file_changes.csv
-  └─ year-long-project-team-1_review-comments.csv
-```
+`analysis.py` looks for team folders matching the glob `data/csv/year-long-project-team-*`. Inside each team folder it tries to locate common CSVs using flexible filename patterns:
 
-## Metrics and outputs
+**Pull requests CSV** (tries these patterns in order):
+- `{team}_all_pull_requests.csv`, `{team}_PRs.csv`, `all_pull_requests.csv`, `pull_requests.csv`
 
-Typical metrics produced by the analysis include:
+**Commits CSV** (tries these patterns):
+- `{team}_PR_commits.csv`, `{team}_commits.csv`, `PR_commits.csv`, `commits.csv`
 
-- Number of branches, PRs, commits, files modified
-- Lines of code added/deleted
-- Reviews and comments counts
-- Merges and related statistics
+**Commit file changes CSV** (tries these patterns):
+- `{team}_commit_file_changes.csv`, `{team}_file_changes.csv`, `commit_file_changes.csv`, `file_changes.csv`
 
-The script aggregates these into team-level rows and generates project-level summaries (means and standard deviations) and PR-level averages. Outputs are saved under `data/analysis/` (for example `table2_statistics.csv`, `team_level_data.csv`, `extreme_teams.csv`).
+**Review/comments CSV** (tries these patterns):
+- `{team}_review-comments.csv`, `review-comments.csv`, `reviews.csv`
 
-## Notes
+If a required PR file is missing for a team, the script logs a warning and skips that team. Other files are optional (if missing, that metric will be zero).
 
-- The analysis module is flexible with column names (it includes mapping utilities to support variations such as `lines_added` vs `additions`).
-- If a team folder is missing required files, it will be skipped with a warning and processing will continue for other teams.
-- This module is intended to consume cleaned/enriched CSVs created by the extraction and labeling pipeline.
+## What the script computes (metrics)
 
-## Notes specific to `analysis.py`
+Per-team statistics collected from each CSV include:
 
-- `analysis.py` writes outputs into `data/analysis/` (the script creates the folder if it doesn't exist).
-- The script contains utilities to normalize column name variations and will try common alternatives
-  for `lines_added`, `lines_deleted` and `files_changed` — this makes it resilient to small
-  differences in extractor output.
-- If `data/csv/` has no team folders matching `year-long-project-team-*` the script will raise a
-  `FileNotFoundError`; for incremental work you can comment that check or point `DATA_FOLDER` to a
-  subset folder for local testing.
+- **Number of branches** — counts unique values in `head_branch` column
+- **Number of PRs** — row count of PR CSV
+- **Number of commits** — row count of commits CSV
+- **Number of files** — counts unique values in `file_path` column (from file changes)
+- **Lines of code** — sum of `lines_added` and `lines_deleted` (tries common column name variations)
+- **Number of reviews** — row count of reviews CSV
+- **Number of comments** — counts non-null values in comment body columns
+- **Number of merges** — counts non-null values in `merged_at` column
+
+The script aggregates these per-team values to produce:
+- **Project-level statistics**: mean and standard deviation across all teams
+- **PR-level statistics**: per-PR averages (total metric ÷ number of PRs per team)
+
+## Outputs
+
+Files written to `data/analysis/`:
+
+1. **`table2_statistics.csv`** — summary table with columns:
+   - `Characteristic` (metric name)
+   - `Project Statistics` (mean and std for all teams)
+   - `PR Statistics` (per-PR mean and std, where applicable)
+
+2. **`team_level_data.csv`** — per-team rows with all computed metrics (one row per team)
+
+3. **`extreme_teams.csv`** — identifies most/least productive teams (ranked by lines of code)
+
+Console output also displays these tables and highlights the extreme teams.
+
+## Robustness & configuration notes
+
+- **Column name flexibility**: Helper functions like `normalize_column_name()` and `safe_sum_column()` look for common variations. For example, the script will accept either `lines_added` or `additions` as column names.
+- **Path configuration**: The script sets `ROOT` relative to its own file location. If you run it from a different working directory or embed it in another workflow, ensure `DATA_FOLDER` and `OUTPUT_FOLDER` point to the correct locations.
+- **Error handling**: If no team folders are found, the script raises `FileNotFoundError` with a clear message. If a team folder is missing CSVs, that team is skipped with a warning printed to console.
+- **Missing metrics**: If a CSV is missing (e.g., no file changes data), that metric will be zero for affected teams.
+
+## Quick troubleshooting
+
+**No outputs / FileNotFoundError:**
+- Verify `data/csv/` exists and contains folders matching the pattern `year-long-project-team-*`
+- Ensure you're running from the repository root: `pwd` should show `/...pathto.../processAnalysis`
+
+**Zero or incorrect line counts:**
+- Check whether PR CSVs or file changes CSVs have `lines_added` or `additions` columns
+- The script will try both; if neither exists, line counts will be zero
+- Check console output for which files were actually loaded
+
+**Single-team debugging:**
+- Temporarily comment out the `FileNotFoundError` check and modify `team_folders` to a single folder
+- Or point `DATA_FOLDER` to a test subfolder containing a single team folder
+
+**Column name mismatches:**
+- Review the `COLUMN_MAPPINGS` dictionary at the top of `analysis.py`
+- Add more alternatives if your CSVs use non-standard column names
+
+## Next steps
+
+- Run the script on your full dataset to generate baseline statistics
+- Use `team_level_data.csv` to inspect individual team contributions
+- Use `extreme_teams.csv` to identify outlier teams (most/least productive)
