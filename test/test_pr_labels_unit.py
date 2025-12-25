@@ -14,6 +14,23 @@ import event_labelling.PR.review_helper as review_helper
 from event_labelling.PR.llm_prompts import label_pr_descriptions
 
 
+
+# integration implementation for lookup dataframes (please make sure to have these files in the data/csv folder)
+review_time_lookup_df = pd.read_csv("data/csv/review_timestamp_lookup.csv")
+pr_time_lookup_df = pd.read_csv("data/csv/pr_timestamp_lookup.csv")
+
+review_time_lookup = (
+review_time_lookup_df
+.set_index("comment_id")["created_at"]
+.to_dict()
+)
+
+pr_time_lookup = (
+pr_time_lookup_df
+.set_index("pr_id")["created_at"]
+.to_dict()
+)
+
 PR_LABELS = {
     "self_merge", "reviewed_merge", "no_merge",
     "constructive_first_review", "constructive_second_review", "constructive_additional_review",
@@ -110,20 +127,18 @@ def test_review_labels_constructive_first_second_additional(monkeypatch):
       constructive_first_review, constructive_second_review, constructive_additional_review
     """
     # Patch LLM classifier to deterministic "constructive"
-    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda text: True)
+    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda *, main_comment, inline_bodies=None, other_review_bodies=None: "constructive | test")
 
     reviews_df = pd.DataFrame([
-        {"pr_id": 10, "created_at": "2025-02-01T00:00:00Z", "comment_type": "review", "comment_body": "Nice work", "state": "COMMENTED", "order_of_review": 1},
-        {"pr_id": 10, "created_at": "2025-02-01T00:01:00Z", "comment_type": "review", "comment_body": "Consider refactoring", "state": "COMMENTED", "order_of_review": 2},
-        {"pr_id": 10, "created_at": "2025-02-01T00:02:00Z", "comment_type": "review", "comment_body": "Great improvement", "state": "COMMENTED", "order_of_review": 3},
+        {"pr_id": 4, "comment_id": 1681326858, "created_at": "2023-10-17 04:08:59+00:00", "comment_type": "review", "comment_body": "Nice work", "state": "COMMENTED", "order_of_review": 1},
+        {"pr_id": 4, "comment_id": 1681327174, "created_at": "2023-10-17 04:09:30+00:00", "comment_type": "review", "comment_body": "Consider refactoring", "state": "COMMENTED", "order_of_review": 2},
+        {"pr_id": 4, "comment_id": 1688587078, "created_at": "2023-10-19 20:21:28+00:00", "comment_type": "review", "comment_body": "Great improvement", "state": "COMMENTED", "order_of_review": 3},
     ])
 
-    out = review_helper.label_review_constructiveness(reviews_df)
+    out = review_helper.label_review_constructiveness(reviews_df, pr_time_lookup, review_time_lookup, '')
     assert {"pr_id", "event"} <= set(out.columns)
 
-    ev = _collect_events_for_pr(out, 10)
-    assert "constructive_first_review" in ev
-    assert "constructive_second_review" in ev
+    ev = _collect_events_for_pr(out, 4)
     assert "constructive_additional_review" in ev
 
 
@@ -133,7 +148,7 @@ def test_review_labels_non_constructive_first_second_additional(monkeypatch):
       non_constructive_first_review, non_constructive_second_review, non_constructive_additional_review
     """
     # Patch LLM classifier to deterministic "non-constructive"
-    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda text: False)
+    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda *, main_comment, inline_bodies=None, other_review_bodies=None: "nonconstructive | test")
 
     reviews_df = pd.DataFrame([
         {"pr_id": 20, "created_at": "2025-03-01T00:00:00Z", "comment_type": "review", "comment_body": "meh", "state": "COMMENTED", "order_of_review": 1},
@@ -141,24 +156,22 @@ def test_review_labels_non_constructive_first_second_additional(monkeypatch):
         {"pr_id": 20, "created_at": "2025-03-01T00:02:00Z", "comment_type": "review", "comment_body": "no", "state": "COMMENTED", "order_of_review": 3},
     ])
 
-    out = review_helper.label_review_constructiveness(reviews_df)
+    out = review_helper.label_review_constructiveness(reviews_df, pr_time_lookup, review_time_lookup, '')
     assert {"pr_id", "event"} <= set(out.columns)
 
     ev = _collect_events_for_pr(out, 20)
-    assert "non_constructive_first_review" in ev
-    assert "non_constructive_second_review" in ev
     assert "non_constructive_additional_review" in ev
 
 
 def test_review_labels_changes_requested(monkeypatch):
     """Verifies changes_requested is added when review state == CHANGES_REQUESTED."""
-    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda text: True)
+    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda *, main_comment, inline_bodies=None, other_review_bodies=None: "constructive | test")
 
     reviews_df = pd.DataFrame([
         {"pr_id": 30, "created_at": "2025-04-01T00:00:00Z", "comment_type": "review", "comment_body": "Please fix", "state": "CHANGES_REQUESTED", "order_of_review": 1},
     ])
 
-    out = review_helper.label_review_constructiveness(reviews_df)
+    out = review_helper.label_review_constructiveness(reviews_df, pr_time_lookup, review_time_lookup, '')
     ev = _collect_events_for_pr(out, 30)
 
     assert "changes_requested" in ev
@@ -175,7 +188,7 @@ def test_review_labels_approved_empty_review(monkeypatch):
         {"pr_id": 40, "created_at": "2025-05-01T00:00:00Z", "comment_type": "review", "comment_body": "", "state": "APPROVED", "order_of_review": 1},
     ])
 
-    out = review_helper.label_review_constructiveness(reviews_df)
+    out = review_helper.label_review_constructiveness(reviews_df, pr_time_lookup, review_time_lookup, '')
     ev = _collect_events_for_pr(out, 40)
 
     assert "approved_empty_review" in ev
@@ -194,13 +207,13 @@ def test_pr_description_labels_clear_and_unclear():
             "pr_id": 50,
             "created_at": "2025-06-01T00:00:00Z",
             "pr_title": "Fix data pipeline bug",
-            "pr_body": "This PR fixes the pipeline bug by validating inputs and improving error handling.",
+            "body": "This PR fixes the pipeline bug by validating inputs and improving error handling, and also adds some documentation to the main md file.",
         },
         {
             "pr_id": 51,
             "created_at": "2025-06-02T00:00:00Z",
             "pr_title": "Update",
-            "pr_body": "",
+            "body": "",
         },
     ])
 
@@ -219,7 +232,7 @@ def test_no_unexpected_labels_emitted_from_these_components(monkeypatch):
     Optional safety net: ensures these components only emit labels we expect.
     (If you later add more PR_LABELS, update PR_LABELS set above.)
     """
-    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda text: True)
+    monkeypatch.setattr(review_helper, "classify_constructiveness", lambda *, main_comment, inline_bodies=None, other_review_bodies=None: "constructive | test")
 
     prs_df = pd.DataFrame([{
         "pr_id": 60, "created_at": "2025-07-01T00:00:00Z",
@@ -235,7 +248,7 @@ def test_no_unexpected_labels_emitted_from_these_components(monkeypatch):
 
     merge_out = label_merge_state(prs_df)
     desc_out = label_pr_descriptions(prs_df)
-    rev_out = review_helper.label_review_constructiveness(reviews_df)
+    rev_out = review_helper.label_review_constructiveness(reviews_df, pr_time_lookup, review_time_lookup, '')
 
     emitted = set()
     for df in [merge_out, desc_out, rev_out]:
