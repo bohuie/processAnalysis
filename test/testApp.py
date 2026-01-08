@@ -458,5 +458,54 @@ class TestIntegration:
         assert csv_dir.exists()
 
 
+class TestEnrichSinglePr:
+    """Unit tests for enrich_single_pr helper."""
+
+    def test_enrich_single_pr_sets_flags_and_counts(self):
+        from scripts.app import enrich_single_pr
+
+        class DummyExtractor:
+            def extract_pull_request_by_id(self, pr_id):
+                return {
+                    "merged_by": {"login": "reviewer"},
+                    "mergeable_state": "clean",
+                    "merged_at": "2024-01-02T00:00:00Z",
+                    "base": {"sha": "base"},
+                    "head": {"sha": "head"},
+                    "title": "Add docs",
+                    "body": "PR body",
+                }
+
+            def compare_commits(self, base_sha, head_sha):
+                assert base_sha == "base"
+                assert head_sha == "head"
+                return {"behind_by": 0}
+
+            def extract_pr_reviews(self, pr_id):
+                return [
+                    {"user": {"login": "r1"}},
+                    {"user": {"login": "r2"}},
+                ]
+
+        pr = {"number": 1}
+        file_changes_cache = {
+            1: [
+                {"filename": "docs/README.md", "additions": 5, "deletions": 0},
+                {"filename": "src/main.py", "additions": 10, "deletions": 2},
+            ]
+        }
+
+        enriched = enrich_single_pr((pr, DummyExtractor(), file_changes_cache))
+
+        assert enriched["merged_by"] == "reviewer"
+        assert enriched["was_up_to_date_at_merge"] is True
+        assert enriched["has_conflicts"] is False
+        assert enriched["num_reviewers"] == 2
+        assert enriched["docs_updated"] is True
+        assert enriched["lines_added"] == 15
+        assert enriched["lines_deleted"] == 2
+        assert enriched["files_changed"] == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
