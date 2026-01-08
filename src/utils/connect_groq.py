@@ -32,7 +32,7 @@ def connect_groq(
     Call Groq chat completion and return the response text.
     Handles rate limits and transient errors with retries.
     """
-    # Online mode: use Groq
+    # Get the Groq client
     client = _get_groq_client()
     model_name = model or DEFAULT_GROQ_MODEL
 
