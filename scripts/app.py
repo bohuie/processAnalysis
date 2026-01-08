@@ -94,7 +94,7 @@ def enrich_single_pr(args) -> dict:
         return pr
 
 
-def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
+def save_prs_to_csv(extractor: PullRequestExtractor, pull_requests: List[dict], filepath: Path):
     """Save pull requests to CSV file."""
     if not pull_requests:
         print("[WARN] No pull requests to save")
@@ -251,8 +251,11 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
     print(f"[INFO] Extracting file changes from {len(pull_requests)} PRs...")
 
     fieldnames = [
+        'repo_name',
         'pr_id',
         'pr_author',
+        'head_branch',
+        'base_branch',
         'commit_sha',
         'author',           
         'file_path',
@@ -271,6 +274,9 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
         
         pr_id = pr.get('number')
         pr_author = pr.get('user', {}).get('login') if pr.get('user') else 'Unknown'
+        repo_name = pr.get('repo_name') or extractor.repo_name  # fallback to extractor
+        head_branch = pr.get('head', {}).get('ref') if pr.get('head') else None
+        base_branch = pr.get('base', {}).get('ref') if pr.get('base') else None
 
         # Get all commits for this PR
         commits = extractor.extract_commits_from_pr(pr_id)
@@ -574,7 +580,7 @@ def extract_repository_data(
         if save_csv:
             # 1. Pull Requests CSV (now with corrected columns and populated data)
             csv_filepath = csv_dir / f"{repo_name}_pull_requests.csv"
-            save_prs_to_csv(pull_requests, extractor, csv_filepath)
+            save_prs_to_csv(extractor, pull_requests, csv_filepath)
             results["output_files"].append(f"PRs CSV: {csv_filepath}")
             
             # 2. Commits CSV
@@ -623,19 +629,20 @@ if __name__ == "__main__":
     
     REPO_OWNER = "COSC-499-W2023"
     REPO_NAMES = [
-        "year-long-project-team-2",
-        "year-long-project-team-8",
-        "year-long-project-team-9",
-        "year-long-project-team-10",
-        "year-long-project-team-11",
-        "year-long-project-team-12"
+        #"year-long-project-team-2",
+        #"year-long-project-team-8",
+        #"year-long-project-team-9",
+        #"year-long-project-team-10",
+        #"year-long-project-team-11",
+        #"year-long-project-team-12",
+        "year-long-project-team-15"
     ]
     OUTPUT_DIR = "./data"
     SAVE_JSON = True
     SAVE_CSV = True
     INCLUDE_COMMITS = True
     INCLUDE_FILES = True
-    INCLUDE_COMMENTS = True
+    INCLUDE_COMMENTS = False
     
     # ==================== EXECUTION ====================
     
