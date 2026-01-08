@@ -1,6 +1,6 @@
 # Code Structure & Branching — Comprehensive Reference
 
-This document describes the Code Structure & Branching labeling system in `event_labelling/CodeStructure_Branching/`. The tooling analyzes PR metadata, commits, and file changes to generate event labels used for research on team development practices. The primary entry point is `main.py`, which orchestrates a multi-stage pipeline: enrichment → cleaning → bot filtering → anonymization → LLM-based labeling → output.
+This document describes the Code Structure & Branching labeling system in `event_labelling/CodeStructure_Branching/`. The tooling analyzes PR metadata, commits, and file changes to generate event labels used for research on team development practices. The primary entry point is `main.py`, which orchestrates a multi-stage pipeline: enrichment → cleaning → bot filtering → anonymization → LLM-based labeling → output. The script reads `AI_MODE` from `.env` to decide between offline Ollama and online Groq.
 
 ## Overview & Purpose
 
@@ -25,10 +25,12 @@ These labels support research into team development workflows, code review pract
 
 - **Python**: 3.8+ (project uses `pyenv` for version management)
 - **Core dependencies**: `pandas`, `tqdm`, `python-dateutil` (see [requirements.txt](requirements.txt))
-- **LLM backend**: Local Ollama instance with `llama3.2:3b` model (or compatible)
-  - Install Ollama: https://ollama.ai
-  - Pull model: `ollama pull llama3.2:3b`
-  - Run daemon: `ollama serve` (in separate terminal)
+- **LLM backend**: Controlled by `AI_MODE` in `.env`
+   - `AI_MODE=offline` (default): uses local Ollama with `llama3.2:3b` (or compatible)
+      - Install Ollama: https://ollama.ai
+      - Pull model: `ollama pull llama3.2:3b`
+      - Run daemon: `ollama serve` (in separate terminal)
+   - `AI_MODE=online`: uses Groq; requires `GROQ_API_KEY` and optional `GROQ_MODEL_NAME`
 
 Quick setup:
 ```bash
@@ -43,7 +45,7 @@ ollama pull llama3.2:3b
 Execute from the **project root** (so relative paths like `data/csv/` resolve correctly):
 
 ```bash
-python event_labelling/CodeStructure_Branching/main.py
+python -m event_labelling.CodeStructure_Branching.main
 ```
 
 The script discovers all `year-long-project-team-*` folders in `data/csv/` and processes them sequentially. Progress is printed to stdout.
