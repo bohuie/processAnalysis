@@ -1,7 +1,7 @@
 # 🧠 Collaboration Analysis – Replication Package
 
 This repository provides a complete pipeline for analyzing collaboration and code structure patterns in GitHub repositories.  
-It uses the **GitHub API** and **LLM-based analysis (Ollama 3.2:3B)** to extract, enrich, clean, and visualize repository pull request (PR) and code structure data.
+It uses the **GitHub API** and **LLM-based analysis (Ollama 3.2:3B by default, Groq optional)** to extract, enrich, clean, and visualize repository pull request (PR) and code structure data.
 
 ---
 
@@ -24,7 +24,7 @@ The workflow consists of several stages — from data extraction to graph genera
 ### 1. Clone the Repository
 ```bash
 git clone https://github.com/<your-username>/processAnalysis.git
-cd collabAnalysis
+cd processAnalysis
 ```
 
 ### 2. Create a Virtual Environment
@@ -35,16 +35,27 @@ venv\Scripts\activate       # (Windows)
 ```
 
 ### 3. Install Dependencies
-Install Python dependencies listed in `requirements.txt` (if not present, manually include your project's libraries such as `pandas`, `requests`, `tqdm`, `ollama`, etc.):
+Install Python dependencies listed in `requirements.txt` (Python 3.9+ recommended):
 ```bash
 pip install -r requirements.txt
 ```
 
+### 4. Configure Environment
+Create a `.env` file (or edit the existing one) at the repo root. Key vars:
+
+```
+AI_MODE=offline        # offline -> local Ollama, online -> Groq API
+GROQ_API_KEY=...       # only needed when AI_MODE=online
+GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional override
+GITHUB_TOKEN=...       # required for GitHub API extraction
+```
+If you want purely offline runs, set `AI_MODE=offline` and ensure Ollama is running. If you want Groq, set `AI_MODE=online` and supply `GROQ_API_KEY`.
+
 ---
 
-## 🤖 Ollama Setup
+## 🤖 LLM Setup (Ollama by default, Groq optional)
 
-This project uses **Ollama 3.2:3B** for analyzing PR communications and code structure.
+This project prefers **Ollama 3.2:3B** for offline analysis. Groq can be enabled via `AI_MODE=online` when you supply `GROQ_API_KEY`.
 
 ### 1. Install Ollama
 Follow instructions from [Ollama's official site](https://ollama.com/download).
@@ -54,7 +65,7 @@ Follow instructions from [Ollama's official site](https://ollama.com/download).
 ollama pull llama3.2:3b
 ```
 
-### 3. Start the Ollama server
+### 3. Start the Ollama server (for AI_MODE=offline)
 ```bash
 ollama serve
 ```
@@ -81,9 +92,9 @@ python event_labelling/Utility/pr_communication_label.py
 ```
 
 ### 3. Code Structure & Branching Analysis  
-Requires a running Ollama instance.
+Respects `AI_MODE` (offline→Ollama, online→Groq). Run from repo root:
 ```bash
-python event_labelling/CodeStructure_Branching/code_structure_and_branching.py
+python -m event_labelling.CodeStructure_Branching.main
 python event_labelling/Utility/csvFix.py
 ```
 
