@@ -15,7 +15,7 @@ from pathlib import Path
 # Add parent directory to path to enable imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
 
-from event_labelling.CodeStructure_Branching.main import assess_branch_meaningfulness
+from event_labelling.CodeStructure_Branching.label_branch_names import assess_branch_meaningfulness
 
 
 def test_branch_assessment():
@@ -237,7 +237,7 @@ def test_branch_assessment():
 
 if __name__ == "__main__":
     print("Starting LLM Output Tests...")
-    print("Note: This requires Ollama to be running with the model specified in code_structure_and_branching.py")
+    print("Note: This requires Ollama to be running with the model specified in event_labelling/CodeStructure_Branching/main.py")
     print()
     
     results = test_branch_assessment()
