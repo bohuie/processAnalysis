@@ -177,8 +177,6 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suff
 
     for u, v, data in G.edges(data=True):
         p = data.get("prob", 0.0)
-        if p < 0.01:
-            continue  # skip very weak transitions
         color = "#0D47A1" if p > 0.4 else "#1565C0" if p > 0.2 else "#64B5F6"
         dot.edge(str(u), str(v), label=f"{p:.2f}", color=color, penwidth=str(1.2 + p * 5))
 
