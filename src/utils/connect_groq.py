@@ -1,5 +1,6 @@
 import os
 import time
+from typing import Optional
 from dotenv import load_dotenv
 from groq import Groq
 
@@ -24,13 +25,14 @@ def _get_groq_client() -> Groq:
 def connect_groq(
     prompt: str,
     max_tokens: int = 200,
-    model: str | None = None,
+    model: Optional[str] = None,
     system_message: str = "You are a precise text classifier and explainer.",
 ) -> str:
     """
     Call Groq chat completion and return the response text.
     Handles rate limits and transient errors with retries.
     """
+    # Online mode: use Groq
     client = _get_groq_client()
     model_name = model or DEFAULT_GROQ_MODEL
 

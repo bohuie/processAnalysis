@@ -102,7 +102,6 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
     
     print(f"[INFO] Saving {len(pull_requests)} PRs to CSV: {filepath}")
     
-    # Fieldnames matching the "Previous" schema
     fieldnames = [
         'pr_id',
         'created_at',
@@ -130,13 +129,6 @@ def save_prs_to_csv(pull_requests: List[dict], filepath: Path):
         writer.writeheader()
         
         for pr in pull_requests:
-            pr_id = pr.get('number')
-            
-            # Get comment counts
-            all_comments = extractor.extract_pr_all_comments(pr_id)
-            review_comments_count = len(all_comments.get('review_comments', []))
-            issue_comments_count = len(all_comments.get('issue_comments', []))
-            
             row = {
                 'pr_id': pr.get('number'),
                 'created_at': pr.get('created_at'),
@@ -293,11 +285,8 @@ def save_file_changes_to_csv(extractor: PullRequestExtractor, pull_requests: Lis
 
             for file in files:
                 all_files.append({
-                    'repo_name': repo_name,
                     'pr_id': pr_id,
                     'pr_author': pr_author,
-                    'head_branch': head_branch,
-                    'base_branch': base_branch,
                     'commit_sha': commit_sha,
                     'author': commit_author,
                     'file_path': file.get('filename'),
@@ -325,7 +314,6 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
     
     print(f"[INFO] Extracting comments from {len(pull_requests)} PRs...")
     
-    # Fieldnames matching the "Previous" schema
     fieldnames = [
         'pr_id',
         'pr_author',
@@ -401,50 +389,6 @@ def save_comments_to_csv(extractor: PullRequestExtractor, pull_requests: List[di
                 # raw GitHub state: APPROVED / CHANGES_REQUESTED / COMMENTED / DISMISSED / etc.
                 'state': (review.get('state') or ""),
             })
-            order_counter += 1
-        
-        # Issue comments (general PR comments)
-        for comment in comments.get('issue_comments', []):
-            comment_body = comment.get('body', '') or ''
-            comment_author = comment.get('user', {}).get('login') if comment.get('user') else 'Unknown'
-            
-            all_comments.append({
-                'pr_id': pr_id,
-                'comment_id': comment.get('id'),
-                'pr_author': pr_author,
-                'author': comment_author,
-                'comment_body': comment_body[:500],
-                'comment_word_count': len(comment_body.split()),
-                'created_at': comment.get('created_at'),
-                'updated_at': comment.get('updated_at'),
-                'user_login': comment_author,
-                'state': '',
-                'order_of_review': order_counter,
-            })
-            order_counter += 1
-        
-        # Review summaries (from extract_pr_reviews)
-        reviews = extractor.extract_pr_reviews(pr_id)
-        for review in reviews:
-            # Only add if there's a body (to avoid duplicates with review_comments)
-            if review.get('body'):
-                comment_body = review.get('body', '') or ''
-                comment_author = review.get('user', {}).get('login') if review.get('user') else 'Unknown'
-                
-                all_comments.append({
-                    'pr_id': pr_id,
-                    'comment_id': review.get('id'),
-                    'pr_author': pr_author,
-                    'author': comment_author,
-                    'comment_body': comment_body[:500],
-                    'comment_word_count': len(comment_body.split()),
-                    'created_at': review.get('submitted_at'),
-                    'updated_at': review.get('submitted_at'),
-                    'user_login': comment_author,
-                    'state': review.get('state', ''),
-                    'order_of_review': order_counter,
-                })
-                order_counter += 1
     
     with open(filepath, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -566,32 +510,32 @@ def extract_repository_data(
 
         # Save to JSON
         if save_json:
-            json_filepath = json_dir / f"{repo_name}_pull_requests.json"
+            json_filepath = json_dir / f"{repo_name}_all_pull_requests.json"
             save_prs_to_json(pull_requests, json_filepath)
             results["output_files"].append(f"PRs JSON: {json_filepath}")
 
         # Save to CSV
         if save_csv:
-            # 1. Pull Requests CSV (now with corrected columns and populated data)
-            csv_filepath = csv_dir / f"{repo_name}_pull_requests.csv"
-            save_prs_to_csv(pull_requests, extractor, csv_filepath)
+            # 1. Pull Requests CSV
+            csv_filepath = csv_dir / f"{repo_name}_all_pull_requests.csv"
+            save_prs_to_csv(pull_requests, csv_filepath)
             results["output_files"].append(f"PRs CSV: {csv_filepath}")
             
             # 2. Commits CSV
             if include_commits:
-                commits_filepath = csv_dir / f"{repo_name}_commits.csv"
+                commits_filepath = csv_dir / f"{repo_name}_PR_commits.csv"
                 save_commits_to_csv(extractor, pull_requests, commits_filepath)
                 results["output_files"].append(f"Commits CSV: {commits_filepath}")
             
             # 3. File Changes CSV
             if include_files:
-                files_filepath = csv_dir / f"{repo_name}_file_changes.csv"
+                files_filepath = csv_dir / f"{repo_name}_commit_file_changes.csv"
                 save_file_changes_to_csv(extractor, pull_requests, files_filepath)
                 results["output_files"].append(f"Files CSV: {files_filepath}")
             
-            # 4. Comments CSV (now includes all review types)
+            # 4. Comments CSV
             if include_comments:
-                comments_filepath = csv_dir / f"{repo_name}_comments.csv"
+                comments_filepath = csv_dir / f"{repo_name}_review-comments.csv"
                 save_comments_to_csv(extractor, pull_requests, comments_filepath)
                 results["output_files"].append(f"Comments CSV: {comments_filepath}")
 
