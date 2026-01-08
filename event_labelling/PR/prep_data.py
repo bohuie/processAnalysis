@@ -8,9 +8,10 @@ from src.utils.enrich_columns import add_order_of_review
 # helper imports
 from event_labelling.PR.helpers_pr import (
     drop_bots_in_author_like_columns,
-    find_log_pr_ids,
-    drop_pr_ids,
 )
+from src.utils.logFilter import (
+    find_log_pr_ids,
+    drop_pr_ids,)
 
 
 # ---------------------------------------------------------------------
