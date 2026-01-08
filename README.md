@@ -23,7 +23,7 @@ The workflow consists of several stages — from data extraction to graph genera
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/<your-username>/collabAnalysis.git
+git clone https://github.com/<your-username>/processAnalysis.git
 cd collabAnalysis
 ```
 

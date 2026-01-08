@@ -1,9 +1,18 @@
+import os
 import pandas as pd
 import numpy as np
-from src.utils.connect_groq import connect_groq  # LLM client (Groq)
+from dotenv import load_dotenv
+from src.utils.connect_groq import connect_groq              # LLM client (Groq)
+from src.utils.ollama_offline import connect_ollama_offline  # LLM client (Offline Ollama)
 
-# === LLM ALIAS (Groq) ================================================
-ask_llm = connect_groq  # generic alias, mirrors connect_ollama/ask_llm pattern
+load_dotenv()
+
+# === LLM ALIAS (Check AI_MODE toggle) ================================
+AI_MODE = os.getenv("AI_MODE", "online").lower()
+if AI_MODE == "offline":
+    ask_llm = connect_ollama_offline
+else:
+    ask_llm = connect_groq
 
 
 def classify_constructiveness(
