@@ -1,6 +1,6 @@
 # Code Structure & Branching — Script Reference
 
-This document reflects the current behaviour of `event_labelling/CodeStructure_Branching/code_structure_and_branching.py` (refactor branch). It describes inputs, configuration, main processing steps, and outputs produced by `process_all_teams()`.
+This document reflects the current behaviour of `event_labelling/CodeStructure_Branching/main.py`. It describes inputs, configuration, main processing steps, and outputs produced by `process_all_teams()`.
 
 ## Summary
 
@@ -16,7 +16,8 @@ This document reflects the current behaviour of `event_labelling/CodeStructure_B
 
 - Python 3.8+ (project uses `pyenv` in development)
 - Core dependencies: `pandas`, `tqdm`, `python-dateutil` (see `requirements.txt`)
-- Local Ollama instance for LLM assessments (optional if `connect_ollama_offline` is a no-op)
+- AI mode toggle via `.env`: `AI_MODE=offline` (default, uses local Ollama) or `AI_MODE=online` (uses Groq; requires `GROQ_API_KEY`)
+- Local Ollama instance for LLM assessments when `AI_MODE=offline`
 
 Quick install (example):
 ```bash
@@ -28,10 +29,10 @@ python -m pip install -r requirements.txt
 
 ## Where to run
 
-Run the script from the project root (repository root is assumed):
+Run the module from the project root (repo root is assumed):
 
 ```bash
-python event_labelling/CodeStructure_Branching/code_structure_and_branching.py
+python -m event_labelling.CodeStructure_Branching.main
 ```
 
 ## Directory expectations
@@ -53,13 +54,14 @@ An anonymization mapping (optional) is loaded from `confidential/anonymized_user
 
 ## Main Configuration (script-level)
 
-Key module-level constants in the script:
+Key module-level controls in the script:
 
 - `MODEL_NAME` — LLM model identifier used by the local `ask_llm` wrapper (default: `llama3.2:3b`)
 - `RUN_TIMESTAMP` — ISO timestamp used in label outputs
 - `ANONYMIZE` — boolean flag to enable anonymization
+- `AI_MODE` — read from environment: `offline` → `connect_ollama_offline`; `online` → `connect_groq`
 
-The code uses the helper `connect_ollama_offline` from `src.utils.ollama_offline` for LLM calls.
+LLM routing happens in `main.py` based on `AI_MODE` (no change needed in callers).
 
 ## Processing stages (what the script does)
 
