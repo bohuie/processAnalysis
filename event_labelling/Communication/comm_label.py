@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from datetime import datetime
 
 from src.utils.connect_groq import connect_groq              # LLM client (Groq)
+from src.utils.ollama_offline import connect_ollama_offline  # LLM client (Offline Ollama)
 from src.utils.normalize_pr_id import normalize_pr_ids       # PR ID normalization
 from src.utils.anonymize_columns import (
     anonymize_author_columns,
@@ -59,8 +60,14 @@ print(f"[INFO] Found {len(team_folders)} team folders:")
 for t in team_folders:
     print(" -", os.path.basename(t))
 
-# === LLM ALIAS (Groq) =================================================
-ask_llm = connect_groq  # generic alias, mirrors connect_ollama/ask_llm pattern
+# === LLM ALIAS (Check AI_MODE toggle) ================================
+AI_MODE = os.getenv("AI_MODE", "online").lower()
+if AI_MODE == "offline":
+    ask_llm = connect_ollama_offline
+    print(f"[INFO] AI_MODE=offline, using local Ollama")
+else:
+    ask_llm = connect_groq
+    print(f"[INFO] AI_MODE=online, using Groq API")
 
 
 # === LLM-BASED CLASSIFIERS ============================================
