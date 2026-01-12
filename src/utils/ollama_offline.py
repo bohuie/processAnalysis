@@ -22,6 +22,7 @@ def connect_ollama_offline(
     model_name: str = DEFAULT_MODEL_NAME,
     system_prompt: str = DEFAULT_SYSTEM_PROMPT,
     options: Optional[Dict[str, Any]] = None,
+    max_tokens: Optional[int] = None,
     retry_delay_seconds: float = 3.0,
     max_retries: int = None,
 ) -> str:
@@ -33,7 +34,11 @@ def connect_ollama_offline(
         )
     
     if options is None:
-        options = DEFAULT_OPTIONS
+        options = dict(DEFAULT_OPTIONS)
+    
+    if max_tokens is not None:
+        # Map max_tokens -> Ollama num_predict
+        options["num_predict"] = int(max_tokens)
     
     retry_count = 0
     

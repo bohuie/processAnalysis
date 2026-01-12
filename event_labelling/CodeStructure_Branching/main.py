@@ -7,12 +7,16 @@ import ast
 from pathlib import Path
 from tqdm import tqdm
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 # Import utilities from src/utils
 from src.utils.ollama_offline import connect_ollama_offline
+from src.utils.connect_groq import connect_groq
 from src.utils.label_merge import label_merge_state
 from src.utils.anonymize_columns import (
     anonymize_column,
@@ -30,19 +34,27 @@ from src.utils.botFilter import (
 )
 
 # Import labeling functions
-from label_branch_names import label_branch_names
-from label_features_per_branch import label_features_per_branch
-from label_feature_size import label_feature_size
-from label_refactor_size import label_refactor_size
-from label_repo_status import label_repo_status
-from label_pr_status import label_pr_status
+from .label_branch_names import label_branch_names
+from .label_features_per_branch import label_features_per_branch
+from .label_feature_size import label_feature_size
+from .label_refactor_size import label_refactor_size
+from .label_repo_status import label_repo_status
+from .label_pr_status import label_pr_status
 
 # === SETUP ============================================================
 MODEL_NAME = "llama3.2:3b"
 RUN_TIMESTAMP = datetime.utcnow().isoformat() + "Z"
 ANONYMIZE = True
 
-ask_llm = connect_ollama_offline
+# Check AI_MODE toggle
+AI_MODE = os.getenv("AI_MODE", "offline").lower()
+if AI_MODE == "online":
+    ask_llm = connect_groq
+    print(f"[INFO] AI_MODE=online, using Groq API")
+else:
+    ask_llm = connect_ollama_offline
+    print(f"[INFO] AI_MODE=offline, using local Ollama")
+
 
 # === FILE ENRICHMENT =====================================
 def enrich_prs_and_comments(team_folder):
