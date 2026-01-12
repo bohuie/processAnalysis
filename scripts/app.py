@@ -567,12 +567,13 @@ if __name__ == "__main__":
     
     REPO_OWNER = "COSC-499-W2023"
     REPO_NAMES = [
-        "year-long-project-team-2",
-        "year-long-project-team-8",
-        "year-long-project-team-9",
-        "year-long-project-team-10",
-        "year-long-project-team-11",
-        "year-long-project-team-12"
+        #"year-long-project-team-2",
+        #"year-long-project-team-8",
+        #"year-long-project-team-9",
+        #"year-long-project-team-10",
+        #"year-long-project-team-11",
+        #"year-long-project-team-12",
+        "year-long-project-team-15"
     ]
     OUTPUT_DIR = "./data"
     SAVE_JSON = True
