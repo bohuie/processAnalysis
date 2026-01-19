@@ -397,34 +397,56 @@ FOLDER_SOURCE=pr  # INVALID - Don't do this!
 
 ### Bot Filter (`src/utils/botFilter.py`)
 
-A reusable utility module for filtering bot accounts located in `src/utils/botFilter.py`.
+A reusable utility module for identifying and removing automated bot accounts from GitHub data. This utility is critical for ensuring analysis metrics reflect genuine human collaboration, not bot activity.
 
-**Features:**
-- Detects common bot patterns (dependabot, renovate, GitHub Actions, etc.)
-- Flexible filtering functions for pandas DataFrames
-- Extensible with custom bot patterns
-- Verbose logging for transparency
+**What It Does:**
+- Detects common bot patterns (dependabot, renovate, GitHub Actions, Codecov, etc.)
+- Removes bot accounts from any DataFrame column containing usernames
+- Works with multiple username columns (author, reviewer, merged_by, etc.)
+- Provides custom pattern support for organization-specific bots
+- Logs filtering statistics for transparency
 
-**Usage Example:**
+**Why You Need It:**
+GitHub repos contain noise from dependency bots, CI/CD automation, and security scanners. These skew collaboration metrics. This utility filters them out so your analysis focuses on **real team activity**.
+
+**Quick Example:**
 ```python
-from src.utils.botFilter import remove_bot_prs, remove_bot_commits, filter_bots_from_multiple_columns
+from src.utils.botFilter import remove_bot_prs, filter_bots_from_multiple_columns
+import pandas as pd
 
-# Filter bot PRs
-clean_prs_df = remove_bot_prs(prs_df)
+# Load PR data
+prs_df = pd.read_csv('data/prs.csv')  # 1500 records
 
-# Filter bot commits
-clean_commits_df = remove_bot_commits(commits_df)
+# Remove bot PRs (uses 'pr_author' column)
+clean_prs = remove_bot_prs(prs_df)
+# Output: [INFO] Filtered out 47 bot records from 1500 total (3.1%)
 
-# Custom filtering
-clean_df = filter_bots_from_multiple_columns(df, username_columns=['pr_author', 'merged_by'])
+# Filter multiple columns (author + reviewer)
+clean_prs = filter_bots_from_multiple_columns(
+    clean_prs,
+    username_columns=['pr_author', 'pr_reviewer'],
+    filter_mode='any'
+)
+# Result: 1430 human-only records ready for analysis
 ```
 
-**Available Functions (examples):**
-- `is_bot_username()` - Check if a username is a bot
-- `filter_bots_from_dataframe()` - Filter bots from any DataFrame
-- `remove_bot_prs()` - Convenience function for PR data
-- `remove_bot_commits()` - Convenience function for commit data
-- `filter_bots_from_multiple_columns()` - Filter based on multiple columns
+**Core Functions:**
+| Function | Purpose |
+|----------|---------|
+| `is_bot_username(username)` | Check if single username is a bot |
+| `filter_bots_from_dataframe(df, username_column)` | Remove bots from one column |
+| `filter_bots_from_multiple_columns(df, columns)` | Remove bots from multiple columns |
+| `get_bot_usernames(df, username_column)` | List all detected bots |
+| `remove_bot_prs(df)` | Shortcut for PR data |
+| `remove_bot_commits(df)` | Shortcut for commit data |
+
+**For Detailed Information:**
+See [documentation/bot_filter.md](documentation/bot_filter.md) for:
+- Complete API reference
+- Real-world workflow examples
+- Custom pattern configuration
+- Troubleshooting guide
+- Performance notes
 
 ---
 
