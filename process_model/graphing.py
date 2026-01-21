@@ -10,55 +10,23 @@ import networkx as nx
 from graphviz import Digraph
 from dotenv import load_dotenv
 
-# ============================================================
-# CONFIGURATION SWITCH - Choose which folder to process
-# ============================================================
-# Set to "branching" or "pr"
-# Can be set via environment variable: FOLDER_SOURCE=branching python ...
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-# ============================================================
-# CONFIGURATION SWITCH - Choose which files to process
-# ============================================================
-# Set to "branching" or "pr_labels"
-# Can be set via environment variable: FILE_SOURCE=branching python ...
-script_path = Path(__file__).resolve()
-print(f"[DEBUG] Script location: {script_path}")
+# Load .env
+load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
-env_path = script_path.parent.parent / '.env'
-print(f"[DEBUG] Looking for .env at: {env_path}")
-print(f"[DEBUG] .env exists: {env_path.exists()}")
-
-# Load it
-load_dotenv(dotenv_path=env_path)
-FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")  # default: "branching"
-# ============================================================
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# Determine input/output paths based on FOLDER_SOURCE
-if FOLDER_SOURCE == "branching":
-    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "branching")
-    CATEGORY_LABEL = "branching"
-    print("[CONFIG] Processing branching graphs from data/outputs/branching/")
-elif FOLDER_SOURCE == "pr":
-    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "pr")
-    CATEGORY_LABEL = "pr"
-    print("[CONFIG] Processing PR graphs from data/outputs/pr/")
-else:
-    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr'")
-
-IN_OVERALL_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_overall.csv")
-IN_AVG_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_avg_session.csv")
-IN_FREQ_FP = os.path.join(PR_OUT_DIR, "team_event_frequency.csv")
-IN_SESS_FP = os.path.join(PR_OUT_DIR, "team_transition_sessions_count.csv")
-IN_CLUSTER_FP = os.path.join(PR_OUT_DIR, f"behavior_clusters_{FOLDER_SOURCE}.csv")
-
-OUT_TEAMS_DIR = PR_OUT_DIR
-OUT_CLUSTERS_DIR = os.path.join(PR_OUT_DIR, "clusters")
-
+# Configuration for both datasets
+CONFIGS = {
+    "branching": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
+        "category_label": "branching"
+    },
+    "pr": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
+        "category_label": "pr"
+    }
+}
 
 # ---------- Tiny utils ----------
 def ensure_dir(path: str):
@@ -301,36 +269,57 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
 
 
 def main():
-    print(f"\n[INFO] Looking for input files in: {PR_OUT_DIR}")
-    
-    for fp in [IN_OVERALL_FP, IN_AVG_FP]:
-        if not os.path.exists(fp):
-            raise FileNotFoundError(
-                f"Missing required input: {fp}\n"
-                f"Run transition_matrix.py first with FILE_SOURCE='{FOLDER_SOURCE}'"
-            )
-
-    overall_df = pd.read_csv(IN_OVERALL_FP, low_memory=False)
-    avg_df = pd.read_csv(IN_AVG_FP, low_memory=False)
-
-    # normalize team_number to string
-    for df in [overall_df, avg_df]:
-        required = {"team_number", "from", "to", "count"}
-        missing = required - set(df.columns)
+    # Process both datasets
+    for dataset_name, config in CONFIGS.items():
+        print(f"\n{'='*70}")
+        print(f"Processing: {dataset_name}")
+        print(f"{'='*70}")
+        
+        pr_out_dir = config["output_folder"]
+        category_label = config["category_label"]
+        
+        in_overall_fp = os.path.join(pr_out_dir, "team_transition_edges_overall.csv")
+        in_avg_fp = os.path.join(pr_out_dir, "team_transition_edges_avg_session.csv")
+        in_freq_fp = os.path.join(pr_out_dir, "team_event_frequency.csv")
+        in_sess_fp = os.path.join(pr_out_dir, "team_transition_sessions_count.csv")
+        in_cluster_fp = os.path.join(pr_out_dir, f"behavior_clusters_{category_label}.csv")
+        
+        # Check required files
+        required_files = [in_overall_fp, in_avg_fp, in_freq_fp, in_sess_fp, in_cluster_fp]
+        missing = [f for f in required_files if not os.path.exists(f)]
         if missing:
-            raise ValueError(f"Missing columns in input CSV: {missing}")
-        df["team_number"] = df["team_number"].apply(_as_str_team)
-        df["from"] = df["from"].astype(str)
-        df["to"] = df["to"].astype(str)
-        df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
+            print(f"[SKIP] Missing required files:")
+            for f in missing:
+                print(f"       - {f}")
+            print(f"       Run clustering.py first")
+            continue
+        
+        print(f"[INFO] Loading data...")
+        overall_df = pd.read_csv(in_overall_fp, low_memory=False)
+        avg_df = pd.read_csv(in_avg_fp, low_memory=False)
 
-    freq_map = load_event_freq_map(IN_FREQ_FP)
-    sess_count = load_sessions_count_map(IN_SESS_FP)
+        # normalize team_number to string
+        for df in [overall_df, avg_df]:
+            required = {"team_number", "from", "to", "count"}
+            missing_cols = required - set(df.columns)
+            if missing_cols:
+                print(f"[ERROR] Missing columns: {missing_cols}")
+                break
+            df["team_number"] = df["team_number"].apply(_as_str_team)
+            df["from"] = df["from"].astype(str)
+            df["to"] = df["to"].astype(str)
+            df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
 
-    render_team_graphs(overall_df, avg_df, freq_map)
-    render_cluster_graphs(avg_df, freq_map, sess_count)
+        freq_map = load_event_freq_map(in_freq_fp)
+        sess_count = load_sessions_count_map(in_sess_fp)
 
-    print(f"\n[✅ DONE] Graphs written under: {PR_OUT_DIR}")
+        print(f"[INFO] Rendering team graphs...")
+        render_team_graphs(overall_df, avg_df, freq_map)
+        
+        print(f"[INFO] Rendering cluster graphs...")
+        render_cluster_graphs(avg_df, freq_map, sess_count)
+
+        print(f"[✅ OK] Graphs written to: {pr_out_dir}")
 
 
 if __name__ == "__main__":

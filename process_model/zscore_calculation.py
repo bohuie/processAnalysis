@@ -4,47 +4,21 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 
-# ============================================================
-# CONFIGURATION SWITCH - Choose which folder to process
-# ============================================================
-# Set to "branching" or "pr"
-# Can be set via environment variable: FOLDER_SOURCE=branching python ...
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-# ============================================================
-# CONFIGURATION SWITCH - Choose which files to process
-# ============================================================
-# Set to "branching" or "pr_labels"
-# Can be set via environment variable: FILE_SOURCE=branching python ...
-script_path = Path(__file__).resolve()
-print(f"[DEBUG] Script location: {script_path}")
+# Load .env
+load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
-env_path = script_path.parent.parent / '.env'
-print(f"[DEBUG] Looking for .env at: {env_path}")
-print(f"[DEBUG] .env exists: {env_path.exists()}")
-
-# Load it
-load_dotenv(dotenv_path=env_path)
-FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")
-FILE_SOURCE = os.getenv("FILE_SOURCE")
-# ============================================================
-
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# Determine input/output paths based on FOLDER_SOURCE
-if FOLDER_SOURCE == "branching":
-    DATA_DIR = os.path.join(ROOT, "data", "outputs", "branching")
-    print("[CONFIG] Processing branching data from data/outputs/branching/")
-elif FOLDER_SOURCE == "pr":
-    DATA_DIR = os.path.join(ROOT, "data", "outputs", "pr")
-    print("[CONFIG] Processing PR data from data/outputs/pr/")
-else:
-    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr'")
-
-IN_FP = os.path.join(DATA_DIR, "team_transition_edges_avg_session.csv")
-OUT_FP = os.path.join(DATA_DIR, "team_transition_edges_avg_session_zscores.csv")
+# Configuration for both datasets
+CONFIGS = {
+    "branching": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "branching")
+    },
+    "pr": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "pr")
+    }
+}
 
 
 def zscore_per_team(edges: pd.DataFrame, team_col: str) -> pd.DataFrame:
@@ -67,32 +41,43 @@ def zscore_per_team(edges: pd.DataFrame, team_col: str) -> pd.DataFrame:
 
 
 def main():
-    if not os.path.exists(IN_FP):
-        raise FileNotFoundError(
-            f"Missing required input: {IN_FP}\n"
-            f"Run transition_matrix.py first with FILE_SOURCE='{FOLDER_SOURCE}'"
-        )
-    
-    print(f"[INFO] Loading data from: {IN_FP}")
-    edges = pd.read_csv(IN_FP, low_memory=False)
+    # Process both datasets
+    for dataset_name, config in CONFIGS.items():
+        print(f"\n{'='*70}")
+        print(f"Processing: {dataset_name}")
+        print(f"{'='*70}")
+        
+        data_dir = config["output_folder"]
+        in_fp = os.path.join(data_dir, "team_transition_edges_avg_session.csv")
+        out_fp = os.path.join(data_dir, "team_transition_edges_avg_session_zscores.csv")
+        
+        if not os.path.exists(in_fp):
+            print(f"[SKIP] Missing input: {in_fp}")
+            print(f"       Run transition_edges.py first")
+            continue
+        
+        print(f"[INFO] Loading data from: {in_fp}")
+        edges = pd.read_csv(in_fp, low_memory=False)
 
-    required = {"from", "to", "count"}
-    missing = required - set(edges.columns)
-    if missing:
-        raise ValueError(f"Missing columns in {IN_FP}: {missing}")
+        required = {"from", "to", "count"}
+        missing = required - set(edges.columns)
+        if missing:
+            print(f"[ERROR] Missing columns in {in_fp}: {missing}")
+            continue
 
-    # support either team_number or team_name
-    if "team_number" in edges.columns:
-        team_col = "team_number"
-    elif "team_name" in edges.columns:
-        team_col = "team_name"
-    else:
-        raise ValueError(f"Missing team identifier column. Expected 'team_number' or 'team_name' in {IN_FP}.")
+        # support either team_number or team_name
+        if "team_number" in edges.columns:
+            team_col = "team_number"
+        elif "team_name" in edges.columns:
+            team_col = "team_name"
+        else:
+            print(f"[ERROR] Missing team identifier column in {in_fp}")
+            continue
 
-    print("[INFO] Computing z-scores...")
-    out = zscore_per_team(edges, team_col=team_col)
-    out.to_csv(OUT_FP, index=False)
-    print(f"[OK] Wrote: {OUT_FP}")
+        print("[INFO] Computing z-scores...")
+        out = zscore_per_team(edges, team_col=team_col)
+        out.to_csv(out_fp, index=False)
+        print(f"[OK] Wrote: {out_fp}")
 
 
 if __name__ == "__main__":
