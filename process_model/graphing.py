@@ -35,6 +35,23 @@ load_dotenv(dotenv_path=env_path)
 FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")  # default: "branching"
 # ============================================================
 
+# ============================================================
+# CONFIGURATION - Visuals & Readability
+# ============================================================
+# Orientation: "horizontal" (default, rankdir=LR) or "vertical" (rankdir=TB)
+GRAPH_ORIENTATION = os.getenv("GRAPH_ORIENTATION", "horizontal")
+
+# Size: Graphviz size string, e.g. "8,5". If unset, defaults depend on orientation.
+GRAPH_SIZE = os.getenv("GRAPH_SIZE")
+
+# Pruning: Don't draw edges with probability < MIN_EDGE_PROB (float)
+try:
+    MIN_EDGE_PROB = float(os.getenv("MIN_EDGE_PROB", "0.0"))
+except ValueError:
+    MIN_EDGE_PROB = 0.0
+
+# ============================================================
+
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
@@ -138,14 +155,28 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suff
 
     # Draw
     dot = Digraph(comment=f"Markov — {user_label}", format="png")
+    
+    # Defaults tailored for orientation
+    if GRAPH_ORIENTATION == "vertical":
+        rankdir = "TB"
+        graph_size = GRAPH_SIZE if GRAPH_SIZE else "10,14"
+        nodesep, ranksep = "0.35", "0.55"
+        font_node, font_edge, font_title = "14", "12", "16"
+    else:
+        # Default / Horizontal
+        rankdir = "LR"
+        graph_size = GRAPH_SIZE if GRAPH_SIZE else "12,6"
+        nodesep, ranksep = "0.3", "0.3"
+        font_node, font_edge, font_title = "12", "10", "14"
+
     dot.attr(
-        rankdir="LR", size="8,5", splines="spline",
-        nodesep="0.3", ranksep="0.3", pack="true", pad="0.2",
+        rankdir=rankdir, size=graph_size, splines="spline",
+        nodesep=nodesep, ranksep=ranksep, pack="true", pad="0.2",
         margin="0", fontname="Helvetica"
     )
-    dot.attr("node", shape="ellipse", style="filled", fontname="Helvetica", fontsize="12", width="2.0", height="1.0")
+    dot.attr("node", shape="ellipse", style="filled", fontname="Helvetica", fontsize=font_node, width="2.0", height="1.0")
     dot.attr(
-        "edge", color="#424242", arrowsize="0.8", fontname="Helvetica", fontsize="10",
+        "edge", color="#424242", arrowsize="0.8", fontname="Helvetica", fontsize=font_edge,
         labelfontcolor="#000", penwidth="1.5"
     )
 
@@ -177,13 +208,18 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suff
 
     for u, v, data in G.edges(data=True):
         p = data.get("prob", 0.0)
+        
+        # Pruning check (visual only)
+        if p < MIN_EDGE_PROB:
+            continue
+
         color = "#0D47A1" if p > 0.4 else "#1565C0" if p > 0.2 else "#64B5F6"
         dot.edge(str(u), str(v), label=f"{p:.2f}", color=color, penwidth=str(1.2 + p * 5))
 
     title = f"Markov Graph — {user_label}"
     if title_suffix:
         title += f" ({title_suffix})"
-    dot.attr(label=title, labelloc="t", fontsize="14", fontname="Helvetica-Bold")
+    dot.attr(label=title, labelloc="t", fontsize=font_title, fontname="Helvetica-Bold")
     dot.graph_attr.update(dpi="400")
 
     ensure_dir(os.path.dirname(output_path))
@@ -330,7 +366,7 @@ def main():
     render_team_graphs(overall_df, avg_df, freq_map)
     render_cluster_graphs(avg_df, freq_map, sess_count)
 
-    print(f"\n[✅ DONE] Graphs written under: {PR_OUT_DIR}")
+    print(f"\n[ DONE] Graphs written under: {PR_OUT_DIR}")
 
 
 if __name__ == "__main__":
