@@ -159,13 +159,13 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suff
 
 
 # ---------- Team graphs ----------
-def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict):
+def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict, out_teams_dir: str, category_label: str):
     teams = sorted(set(overall_df["team_number"]).union(set(avg_df["team_number"])),
                    key=lambda x: int(x) if str(x).isdigit() else 999999)
 
     for team in teams:
         team_str = _as_str_team(team)
-        team_dir = os.path.join(OUT_TEAMS_DIR, f"year-long-project-team-{team_str}")
+        team_dir = os.path.join(out_teams_dir, f"year-long-project-team-{team_str}")
         out_overall_dir = os.path.join(team_dir, "team_overall")
         out_avg_dir = os.path.join(team_dir, "team_avg_session")
         ensure_dir(out_overall_dir)
@@ -180,7 +180,7 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             edges_df=t_overall,
             event_freq=event_freq,
             output_path=os.path.join(out_overall_dir, f"team{team_str}_overall.png"),
-            title_suffix=f"Overall • {CATEGORY_LABEL}",
+            title_suffix=f"Overall • {category_label}",
         )
 
         # Avg session (START/END expected)
@@ -190,7 +190,7 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             edges_df=t_avg,
             event_freq=event_freq,
             output_path=os.path.join(out_avg_dir, f"team{team_str}_avg_session.png"),
-            title_suffix=f"Avg Session • {CATEGORY_LABEL}",
+            title_suffix=f"Avg Session • {category_label}",
         )
 
 
@@ -231,12 +231,12 @@ def _aggregate_cluster_event_freq(freq_map: dict, teams: list[str]) -> dict:
     return out
 
 
-def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict):
-    if not os.path.exists(IN_CLUSTER_FP):
-        print(f"[INFO] No cluster CSV found at {IN_CLUSTER_FP} — skipping cluster graphs.")
+def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict, in_cluster_fp: str, out_clusters_dir: str, category_label: str):
+    if not os.path.exists(in_cluster_fp):
+        print(f"[INFO] No cluster CSV found at {in_cluster_fp} — skipping cluster graphs.")
         return
 
-    cdf = pd.read_csv(IN_CLUSTER_FP, low_memory=False)
+    cdf = pd.read_csv(in_cluster_fp, low_memory=False)
     required = {"team_number", "cluster_id"}
     if not required.issubset(cdf.columns):
         print("[WARN] Cluster CSV missing required columns — skipping cluster graphs.")
@@ -246,7 +246,7 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
     cdf["team_number"] = cdf["team_number"].apply(_as_str_team)
     cdf["cluster_id"] = pd.to_numeric(cdf["cluster_id"], errors="coerce").fillna(0).astype(int)
 
-    ensure_dir(OUT_CLUSTERS_DIR)
+    ensure_dir(out_clusters_dir)
 
     for cluster_id, g in cdf.groupby("cluster_id"):
         teams = sorted(g["team_number"].tolist(), key=lambda x: int(x) if x.isdigit() else 999999)
@@ -256,7 +256,7 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
 
         # match old naming style: cluster1, cluster2, ...
         human_cluster = int(cluster_id) + 1
-        cdir = os.path.join(OUT_CLUSTERS_DIR, f"cluster{human_cluster}")
+        cdir = os.path.join(out_clusters_dir, f"cluster{human_cluster}")
         ensure_dir(cdir)
 
         build_markov_graph(
@@ -264,7 +264,7 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
             edges_df=cluster_edges,
             event_freq=cluster_freq,
             output_path=os.path.join(cdir, "cluster_avg_session.png"),
-            title_suffix=f"Avg Session • {CATEGORY_LABEL}",
+            title_suffix=f"Avg Session • {category_label}",
         )
 
 
@@ -312,14 +312,20 @@ def main():
 
         freq_map = load_event_freq_map(in_freq_fp)
         sess_count = load_sessions_count_map(in_sess_fp)
+        
+        # Setup output directories scoped by dataset (pr or branching)
+        out_base_dir = os.path.join(ROOT, "data", "outputs", category_label)
+        ensure_dir(out_base_dir)
+        out_teams_dir = out_base_dir
+        out_clusters_dir = os.path.join(out_base_dir, "clusters")
 
         print(f"[INFO] Rendering team graphs...")
-        render_team_graphs(overall_df, avg_df, freq_map)
+        render_team_graphs(overall_df, avg_df, freq_map, out_teams_dir, category_label)
         
         print(f"[INFO] Rendering cluster graphs...")
-        render_cluster_graphs(avg_df, freq_map, sess_count)
+        render_cluster_graphs(avg_df, freq_map, sess_count, in_cluster_fp, out_clusters_dir, category_label)
 
-        print(f"[✅ OK] Graphs written to: {pr_out_dir}")
+        print(f"[✅ OK] Graphs written to: {out_base_dir}")
 
 
 if __name__ == "__main__":

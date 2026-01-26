@@ -52,62 +52,62 @@ all_results, failed_repos = run_batch_extraction(
 )
 
 # Optional: your custom summary
-print("\n🎯 Extraction Summary:")
+print("\nExtraction Summary:")
 for result in all_results:
     print(f"  {result['repo_name']}: {result['pull_requests_extracted']} PRs")
 
 # Continue with labeling steps
-print("\n📝 Step 2: Event Labelling & PR Analysis")
+print("\n Step 2: Event Labelling & PR Analysis")
 try:
     print("   • Processing Branching and Code Structure...")
     process_all_teams_cs()
-    print("   ✓ Finished Branching Analysis\n")
+    print("Finished Branching Analysis\n")
 except Exception as e:
-    print(f"   ⚠️  Branching analysis error: {e}\n")
+    print(f"Branching analysis error: {e}\n")
 
 try:
     print("   • Processing PR Labels...")
     process_all_teams_pr()
-    print("   ✓ Finished PR Analysis\n")
+    print("Finished PR Analysis\n")
 except Exception as e:
-    print(f"   ⚠️  PR analysis error: {e}\n")
+    print(f"PR analysis error: {e}\n")
 
 # Run process model analysis (BOTH datasets automatically)
-print("\n📊 Step 3: Process Model Analysis (Both Datasets)")
+print("\nStep 3: Process Model Analysis (Both Datasets)")
 print("   Processing for branching AND pr_labels automatically...\n")
 
 try:
     print("   • Computing transition edges...")
     run_transition_edges()
-    print("   ✓ Finished transition edges\n")
+    print("   [OK] Finished transition edges\n")
 except Exception as e:
-    print(f"   ⚠️  Transition edges error: {e}\n")
+    print(f"   Transition edges error: {e}\n")
 
 try:
     print("   • Computing z-scores...")
     run_zscore()
-    print("   ✓ Finished z-scores\n")
+    print("   [OK] Finished z-scores\n")
 except Exception as e:
-    print(f"   ⚠️  Z-score error: {e}\n")
+    print(f"   Z-score error: {e}\n")
 
 try:
     print("   • Computing clusters...")
     run_clustering()
-    print("   ✓ Finished clustering\n")
+    print("   [OK] Finished clustering\n")
 except Exception as e:
-    print(f"   ⚠️  Clustering error: {e}\n")
+    print(f"   Clustering error: {e}\n")
 
 try:
     print("   • Generating graphs...")
     run_graphing()
-    print("   ✓ Finished graph generation\n")
+    print("   [OK] Finished graph generation\n")
 except Exception as e:
-    print(f"   ⚠️  Graph generation error: {e}\n")
+    print(f"   Graph generation error: {e}\n")
 
 print("=" * 70)
-print("✅ Pipeline Complete!")
+print("[COMPLETE] Pipeline Complete!")
 print("=" * 70)
-print("\n📂 Output locations:")
+print("\nOutput locations:")
 print("  • Branching analysis: data/outputs/branching/")
 print("  • PR analysis: data/outputs/pr/")
 print("  • Both datasets processed automatically - no environment variables needed!")

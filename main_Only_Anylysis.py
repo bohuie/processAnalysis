@@ -14,20 +14,20 @@ from process_model.clustering import main as run_clustering
 from process_model.graphing import main as run_graphing
 
 # Continue with labeling steps
-print("\n📝 Step 2: Event Labelling & PR Analysis")
+print("\nStep 2: Event Labelling & PR Analysis")
 try:
     print("   • Processing Branching and Code Structure...")
     process_all_teams_cs()
-    print("   ✓ Finished Branching Analysis\n")
+    print("   [OK] Finished Branching Analysis\n")
 except Exception as e:
-    print(f"   ⚠️  Branching analysis error: {e}\n")
+    print(f"   [ERROR] Branching analysis error: {e}\n")
 
 try:
     print("   • Processing PR Labels...")
     process_all_teams_pr()
-    print("   ✓ Finished PR Analysis\n")
+    print("   [OK] Finished PR Analysis\n")
 except Exception as e:
-    print(f"   ⚠️  PR analysis error: {e}\n")
+    print(f"   [ERROR] PR analysis error: {e}\n")
 
 # Run process model analysis (BOTH datasets automatically)
 print("\n📊 Step 3: Process Model Analysis (Both Datasets)")
@@ -54,17 +54,42 @@ try:
 except Exception as e:
     print(f"   ⚠️  Clustering error: {e}\n")
 
+# Run process model analysis (BOTH datasets automatically)
+print("\nStep 3: Process Model Analysis (Both Datasets)")
+print("   Processing for branching AND pr_labels automatically...\n")
+
+try:
+    print("   • Computing transition edges...")
+    run_transition_edges()
+    print("   [OK] Finished transition edges\n")
+except Exception as e:
+    print(f"   [ERROR] Transition edges error: {e}\n")
+
+try:
+    print("   • Computing z-scores...")
+    run_zscore()
+    print("   [OK] Finished z-scores\n")
+except Exception as e:
+    print(f"   [ERROR] Z-score error: {e}\n")
+
+try:
+    print("   • Computing clusters...")
+    run_clustering()
+    print("   [OK] Finished clustering\n")
+except Exception as e:
+    print(f"   [ERROR] Clustering error: {e}\n")
+
 try:
     print("   • Generating graphs...")
     run_graphing()
-    print("   ✓ Finished graph generation\n")
+    print("   [OK] Finished graph generation\n")
 except Exception as e:
-    print(f"   ⚠️  Graph generation error: {e}\n")
+    print(f"   [ERROR] Graph generation error: {e}\n")
 
 print("=" * 70)
-print("✅ Pipeline Complete!")
+print("[COMPLETE] Pipeline Complete!")
 print("=" * 70)
-print("\n📂 Output locations:")
+print("\nOutput locations:")
 print("  • Branching analysis: data/outputs/branching/")
 print("  • PR analysis: data/outputs/pr/")
 print("  • Both datasets processed automatically - no environment variables needed!")
