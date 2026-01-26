@@ -306,3 +306,45 @@ python test/testApp.py
 ```
 
 ---
+
+## 🚨 Code Violations Detection
+Designed to identify potential code smells and maintainability issues in GitHub repositories using extracted patch-level data.
+
+
+### Currently Implemented Violation
+- **MagicNumberCheck Detection** : Detects numeric literals used directly in code (e.g., `3000`) instead of named constants.
+
+
+### Documentation
+A detailed explanation of the violations system is available here: 
+📄 [documentation/violations.md](documentation/violations.md)
+
+
+### Testing Violations
+After completing the main repository setup, violation tests can be run independently:
+
+
+```bash
+# 1. Controlled unit tests (synthetic code snippets)
+pytest -q test/test_magic_number_check.py
+
+
+# 2. Patch-level test using a single real GitHub patch_snippet (Team 15 fixture)
+pytest -q test/test_magic_number_team15_patch_fixture.py
+
+
+# 3. Full team-scale test (iterate over all patch_snippet rows in a CSV)
+MAGIC_NUMBER_PATCH_CSV=data/csv/year-long-project-team-<team number>/year-long-project-team-<team number>_commit_file_changes.csv \
+pytest -q test/test_magic_number_team_scaled_csv.py
+```
+These tests are designed to:
+
+
+- Validate detection logic on synthetic inputs
+- Verify correctness on real GitHub patch data
+- Ensure robustness when scaling across all patch snippets for a team
+
+
+⚠️ **Note**: Violation detection is currently decoupled from the main analysis pipeline and is intended for incremental development and experimentation.
+
+---
