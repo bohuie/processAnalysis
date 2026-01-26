@@ -214,7 +214,9 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suff
             continue
 
         color = "#0D47A1" if p > 0.4 else "#1565C0" if p > 0.2 else "#64B5F6"
-        dot.edge(str(u), str(v), label=f"{p:.2f}", color=color, penwidth=str(1.2 + p * 5))
+        # HTML-like label with padding to distance text from the line
+        label_html = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD CELLPADDING="4">{p:.2f}</TD></TR></TABLE>>'
+        dot.edge(str(u), str(v), label=label_html, color=color, penwidth=str(1.2 + p * 5))
 
     title = f"Markov Graph — {user_label}"
     if title_suffix:
