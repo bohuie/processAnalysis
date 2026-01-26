@@ -64,7 +64,8 @@ def build_team_matrix(df: pd.DataFrame, z_threshold: float):
 
     # apply threshold here
     if "z_score" in df.columns:
-        df = df[df["z_score"] >= z_threshold].copy()
+        df = df[df["z_score"].abs() >= z_threshold].copy()
+
     else:
         raise ValueError("Expected 'z_score' column in input; zscore_calculation.py should generate it.")
 
