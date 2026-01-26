@@ -1,0 +1,23 @@
+.git
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.db
+*.sqlite
+.env
+.env.local
+pytest_cache
+.pytest_cache
+build
+dist
+node_modules
+.cache
+.eggs
+*.egg-info
+.vscode
+.idea
+.DS_Store
+
+# data outputs (mounted at runtime)
+data/outputs
