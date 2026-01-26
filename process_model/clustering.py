@@ -17,8 +17,6 @@ ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 # ============================================================
 # CONFIGURATION SWITCH - Choose which files to process
 # ============================================================
-# Set to "branching" or "pr_labels"
-# Can be set via environment variable: FILE_SOURCE=branching python ...
 script_path = Path(__file__).resolve()
 print(f"[DEBUG] Script location: {script_path}")
 
@@ -50,12 +48,22 @@ IN_FP = os.path.join(DATA_DIR, "team_transition_edges_avg_session_zscores.csv")
 OUT_FP = os.path.join(DATA_DIR, f"behavior_clusters_{CLUSTER_SUFFIX}.csv")
 
 MATRIX_OUT_FP = os.path.join(DATA_DIR, f"team_transition_matrix_{CLUSTER_SUFFIX}.csv")
-
 FILTERED_EDGES_OUT_FP = os.path.join(
     DATA_DIR, f"team_transition_edges_avg_session_zfiltered_{CLUSTER_SUFFIX}.csv"
 )
 
-Z_THRESHOLD = 1.645  # pick in clustering, not zscore script
+Z_THRESHOLD = 1.645  # chosen here (not buried inside filtering)
+
+
+def filter_edges_by_zscore(df: pd.DataFrame, cutoff: float) -> pd.DataFrame:
+    """
+    Returns only edges with |z_score| >= cutoff (both tails).
+    cutoff is an input parameter (not hardcoded inside this function).
+    """
+    if "z_score" not in df.columns:
+        raise ValueError("Expected 'z_score' column in input; zscore_calculation.py should generate it.")
+    return df[df["z_score"].abs() >= cutoff].copy()
+
 
 def build_team_matrix(df: pd.DataFrame, z_threshold: float):
     df = df.copy()
@@ -68,13 +76,8 @@ def build_team_matrix(df: pd.DataFrame, z_threshold: float):
                    key=lambda x: int(x) if x.isdigit() else 999999)
     X = np.zeros((len(teams), len(pairs)), dtype=float)
 
-    # apply threshold here
-    if "z_score" in df.columns:
-        df_filt = df[df["z_score"].abs() >= z_threshold].copy()
-
-
-    else:
-        raise ValueError("Expected 'z_score' column in input; zscore_calculation.py should generate it.")
+    # ✅ apply threshold via function call
+    df_filt = filter_edges_by_zscore(df, cutoff=z_threshold)
 
     for ti, team in enumerate(teams):
         g = df_filt[df_filt["team_number"].astype(str) == team]
@@ -106,44 +109,45 @@ def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
 
     return best_k, best_score
 
+
 def main():
     if not os.path.exists(IN_FP):
         raise FileNotFoundError(
             f"Missing required input: {IN_FP}\n"
             f"Run zscore_calculation.py first with FOLDER_SOURCE='{FOLDER_SOURCE}'"
         )
-    
+
     print(f"[INFO] Loading data from: {IN_FP}")
     df = pd.read_csv(IN_FP, low_memory=False)
-    
+
     print("[INFO] Building team matrix...")
     teams, pairs, X, df_filt = build_team_matrix(df, z_threshold=Z_THRESHOLD)
 
     nonzero_mask = (X.sum(axis=1) > 0)
     kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
     X = X[nonzero_mask]
-    
+
     dropped = int((~nonzero_mask).sum())
     if dropped:
         print(f"[INFO] Dropped {dropped} teams with all-zero vectors at |z| ≥ {Z_THRESHOLD}")
-    
+
+    # export z-filtered edges for kept teams
     df_filt = df_filt.copy()
     df_filt["team_number"] = df_filt["team_number"].astype(str)
     df_filt_kept = df_filt[df_filt["team_number"].isin(set(map(str, kept_teams)))].copy()
-    
+
     cols_first = ["team_number", "from", "to", "count", "z_score"]
     remaining = [c for c in df_filt_kept.columns if c not in cols_first]
     df_filt_kept = df_filt_kept[cols_first + remaining]
     df_filt_kept.to_csv(FILTERED_EDGES_OUT_FP, index=False)
     print(f"[OK] Wrote z-filtered edges: {FILTERED_EDGES_OUT_FP}")
-        
-    # Column names become "from->to" so they're readable in CSV.
+
+    # export transition matrix
     col_names = [f"{a}->{b}" for (a, b) in pairs]
     matrix_df = pd.DataFrame(X, index=kept_teams, columns=col_names)
     matrix_df.index.name = "team_number"
     matrix_df.to_csv(MATRIX_OUT_FP)
     print(f"[OK] Wrote transition matrix: {MATRIX_OUT_FP}")
-
 
     if X.shape[0] < 2:
         out = pd.DataFrame({"team_number": kept_teams, "cluster_id": [0] * len(kept_teams)})
@@ -164,6 +168,7 @@ def main():
     })
     out.to_csv(OUT_FP, index=False)
     print(f"[OK] Wrote: {OUT_FP}")
+
 
 if __name__ == "__main__":
     main()
