@@ -573,7 +573,8 @@ if __name__ == "__main__":
         #"year-long-project-team-10",
         #"year-long-project-team-11",
         #"year-long-project-team-12",
-        "year-long-project-team-15"
+        "year-long-project-team-15",
+        "year-long-project-team-19"
     ]
     OUTPUT_DIR = "./data"
     SAVE_JSON = True
