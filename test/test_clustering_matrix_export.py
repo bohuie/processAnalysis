@@ -4,27 +4,12 @@ import importlib.util
 from pathlib import Path
 
 import pandas as pd
+from test.test_clustering_filtered_edges_export import clustering_mod
 import pytest
-
-@pytest.fixture()
-def clustering_mod():
-    repo_root = Path(__file__).resolve().parents[1]
-
-    path = repo_root / "process_model" / "clustering.py"
-
-    if path.exists():
-        spec = importlib.util.spec_from_file_location("clustering_under_test", path)
-        assert spec and spec.loader, f"Failed to load spec for {path}"
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)  # type: ignore[attr-defined]
-        return mod
-
-    raise FileNotFoundError(
-        "Could not locate clustering.py. Add its path to CANDIDATE_PATHS in the test."
-    )
 
 
 def _write_input_csv(tmp_path: Path) -> Path:
+    # includes both tails + one team that will be dropped
     df = pd.DataFrame(
         [
             {"team_number": 1, "from": "START", "to": "A", "count": 0.9, "z_score": 2.0},
@@ -41,7 +26,7 @@ def _write_input_csv(tmp_path: Path) -> Path:
     return fp
 
 
-def test_filtered_edges_csv_export(tmp_path: Path, clustering_mod, monkeypatch):
+def test_transition_matrix_csv_export(tmp_path: Path, clustering_mod, monkeypatch):
     in_fp = _write_input_csv(tmp_path)
 
     out_clusters = tmp_path / "behavior_clusters_test.csv"
@@ -53,22 +38,25 @@ def test_filtered_edges_csv_export(tmp_path: Path, clustering_mod, monkeypatch):
     monkeypatch.setattr(clustering_mod, "MATRIX_OUT_FP", str(out_matrix))
     monkeypatch.setattr(clustering_mod, "FILTERED_EDGES_OUT_FP", str(out_edges))
     monkeypatch.setattr(clustering_mod, "Z_THRESHOLD", 1.645)
+
     clustering_mod.main()
 
-    # ---- filtered edges export exists
-    assert out_edges.exists(), "Filtered edges CSV was not created"
+    # ---- matrix export exists
+    assert out_matrix.exists(), "Transition matrix CSV was not created"
 
-    edges = pd.read_csv(out_edges)
-
-    # required columns
-    assert {"team_number", "from", "to", "count", "z_score"}.issubset(edges.columns)
-
-    # both tails condition holds
-    assert (edges["z_score"].abs() >= clustering_mod.Z_THRESHOLD).all()
+    mat = pd.read_csv(out_matrix)
+    assert "team_number" in mat.columns, "Matrix CSV should include team_number column"
 
     # dropped team 3 should not be present
-    assert set(edges["team_number"].astype(str).unique()) == {"1", "2"}
+    assert set(mat["team_number"].astype(str).tolist()) == {"1", "2"}
 
-    # sanity: should only include the 3 surviving edges
-    # (team1 START->A; team2 START->A; team2 A->END)
-    assert len(edges) == 3
+    # columns from FULL df pairs should exist
+    assert "START->A" in mat.columns
+    assert "A->END" in mat.columns
+
+    # values match surviving edges; filtered-out edges remain 0
+    mat = mat.set_index("team_number")
+    assert pytest.approx(mat.loc[1, "START->A"], rel=1e-9) == 0.9
+    assert pytest.approx(mat.loc[1, "A->END"], rel=1e-9) == 0.0  # filtered out
+    assert pytest.approx(mat.loc[2, "START->A"], rel=1e-9) == 0.7
+    assert pytest.approx(mat.loc[2, "A->END"], rel=1e-9) == 0.3
