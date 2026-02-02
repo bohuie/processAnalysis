@@ -4,6 +4,12 @@ import numpy as np
 import ast
 from pathlib import Path
 from dotenv import load_dotenv
+from src.utils.markov_common import (
+    explode_and_sort_events,
+    compute_overall_edges_old_style,
+    compute_avg_session_edges_old_style,
+    add_transition_probs,
+)
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
@@ -90,122 +96,13 @@ def parse_team_name_and_number(fp: str) -> tuple[str, str]:
     team_number = num_m.group(1) if num_m else "unknown"
     return team_name, team_number
 
-
-def normalize_event_field(event):
-    """
-    Old-graphing behavior:
-      - if event looks like a list string: "['a','b']" -> ['a','b']
-      - otherwise: 'a' -> ['a']
-    """
-    if pd.isna(event):
-        return []
-
-    # if it's already a list (rare, but safe)
-    if isinstance(event, list):
-        return [str(x).strip() for x in event if str(x).strip()]
-
-    s = str(event).strip()
-    if not s:
-        return []
-
-    if s.startswith("[") and s.endswith("]"):
-        try:
-            parsed = ast.literal_eval(s)
-            if isinstance(parsed, list):
-                return [str(x).strip() for x in parsed if str(x).strip()]
-            return [str(parsed).strip()]
-        except Exception:
-            # fall back: treat as a single event string
-            return [s]
-
-    return [s]
-
-
 def load_noholes_csv(fp: str) -> pd.DataFrame:
     df = pd.read_csv(fp, low_memory=False)
     required = {"pr_id", "timestamp", "event"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"{fp} missing columns: {missing}")
-
-    df["pr_id"] = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-
-    # keep original row order so list-elements keep deterministic ordering
-    df["_row_idx"] = np.arange(len(df))
-
-    # parse event into list, then explode to one-event-per-row (old graphing behavior)
-    df["event_list"] = df["event"].apply(normalize_event_field)
-    df = df.explode("event_list", ignore_index=True)
-
-    df["event"] = df["event_list"].astype(str).str.strip()
-
-    df = df.dropna(subset=["pr_id", "timestamp"])
-    df = df[df["event"].ne("")]
-
-    # IMPORTANT: stable sort to preserve within-timestamp ordering
-    df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
-
-    return df[["pr_id", "timestamp", "event"]]
-
-
-def compute_overall_edges_old_style(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """
-    Matches old compute_edge_counts(flat):
-      - per PR session, count transitions event[i] -> event[i+1]
-      - NO START/END
-      - pooled counts across PR sessions
-    """
-    edge_counter = {}
-    n_sessions = 0
-
-    for pr_id, g in df.groupby("pr_id", sort=False):
-        events = g["event"].tolist()
-        if len(events) < 1:
-            continue
-        n_sessions += 1
-        for i in range(len(events) - 1):
-            a, b = events[i], events[i + 1]
-            edge_counter[(a, b)] = edge_counter.get((a, b), 0) + 1
-
-    overall_edges = pd.DataFrame(
-        [{"from": a, "to": b, "count": c} for (a, b), c in edge_counter.items()]
-    )
-    return overall_edges, n_sessions
-
-def compute_avg_session_edges_old_style(df: pd.DataFrame, n_sessions: int) -> pd.DataFrame:
-    """
-    Matches old compute_avg_session_edges(flat):
-      - per PR session, include START->first and last->END
-      - pooled counts then divide by n_sessions
-    """
-    edge_counter = {}
-
-    if n_sessions == 0:
-        return pd.DataFrame(columns=["from", "to", "count"])
-
-    for pr_id, g in df.groupby("pr_id", sort=False):
-        events = g["event"].tolist()
-        if len(events) < 1:
-            continue
-        seq = ["START"] + events + ["END"]
-        for i in range(len(seq) - 1):
-            a, b = seq[i], seq[i + 1]
-            edge_counter[(a, b)] = edge_counter.get((a, b), 0) + 1
-
-    avg_edges = pd.DataFrame(
-        [{"from": a, "to": b, "count": c / n_sessions} for (a, b), c in edge_counter.items()]
-    )
-    return avg_edges
-
-def add_transition_probs(edges: pd.DataFrame) -> pd.DataFrame:
-    if edges.empty:
-        return edges.assign(prob=[])
-    edges = edges.copy()
-    edges["count"] = edges["count"].astype(float)
-    denom = edges.groupby("from")["count"].transform("sum")
-    edges["prob"] = np.where(denom > 0, edges["count"] / denom, 0.0)
-    return edges
+    return explode_and_sort_events(df)
 
 def main():
     files = discover_clean_team_files()
