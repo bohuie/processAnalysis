@@ -1,7 +1,3 @@
-# ============================================================
-# graphing.py — PR Markov Graph Visualizer (CSV -> PNG only)
-# ============================================================
-
 import os
 from pathlib import Path
 import pandas as pd
@@ -9,6 +5,7 @@ import numpy as np
 import networkx as nx
 from graphviz import Digraph
 from dotenv import load_dotenv
+from src.utils.markov_common import ensure_dir, as_str_team as _as_str_team, build_markov_graph
 
 # ============================================================
 # CONFIGURATION SWITCH - Choose which folder to process
@@ -60,21 +57,6 @@ OUT_TEAMS_DIR = PR_OUT_DIR
 OUT_CLUSTERS_DIR = os.path.join(PR_OUT_DIR, "clusters")
 
 
-# ---------- Tiny utils ----------
-def ensure_dir(path: str):
-    os.makedirs(path, exist_ok=True)
-
-
-def _as_str_team(x) -> str:
-    if pd.isna(x):
-        return "unknown"
-    s = str(x).strip()
-    # handle "7.0" etc
-    if s.endswith(".0") and s.replace(".0", "").isdigit():
-        return s.replace(".0", "")
-    return s
-
-
 def load_event_freq_map(freq_fp: str) -> dict:
     """
     Returns: {team_number_str: {event: count_int}}
@@ -112,82 +94,6 @@ def load_sessions_count_map(sess_fp: str) -> dict:
     df["team_number"] = df["team_number"].apply(_as_str_team)
     df["num_pr_sessions"] = pd.to_numeric(df["num_pr_sessions"], errors="coerce").fillna(0).astype(int)
     return dict(zip(df["team_number"], df["num_pr_sessions"]))
-
-
-# ---------- Rendering (same styling as old script) ----------
-def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suffix="", normalize_probs=True):
-    edges_df = edges_df.copy()
-    edges_df = edges_df[edges_df["count"] > 0]
-    if edges_df.empty:
-        print(f"[WARN] Skipping {user_label} — no edges.")
-        return
-
-    # Build directed graph with weights
-    G = nx.DiGraph()
-    for _, row in edges_df.iterrows():
-        a, b, w = row["from"], row["to"], float(row["count"])
-        if G.has_edge(a, b):
-            G[a][b]["weight"] += w
-        else:
-            G.add_edge(a, b, weight=w)
-
-    # Probabilities
-    for u, v in G.edges():
-        total = sum(G[u][x]["weight"] for x in G.successors(u))
-        G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0
-
-    # Draw
-    dot = Digraph(comment=f"Markov — {user_label}", format="png")
-    dot.attr(
-        rankdir="LR", size="8,5", splines="spline",
-        nodesep="0.3", ranksep="0.3", pack="true", pad="0.2",
-        margin="0", fontname="Helvetica"
-    )
-    dot.attr("node", shape="ellipse", style="filled", fontname="Helvetica", fontsize="12", width="2.0", height="1.0")
-    dot.attr(
-        "edge", color="#424242", arrowsize="0.8", fontname="Helvetica", fontsize="10",
-        labelfontcolor="#000", penwidth="1.5"
-    )
-
-    for node in G.nodes():
-        if node == "START":
-            dot.node(
-                str(node), label="START",
-                fillcolor="#E57373", color="#B71C1C", fontcolor="white",
-                shape="circle", style="filled,bold", penwidth="2",
-                width="0.8", height="0.8", fixedsize="true"
-            )
-        elif node == "END":
-            dot.node(
-                str(node), label="END",
-                fillcolor="#81C784", color="#1B5E20", fontcolor="white",
-                shape="doublecircle", style="filled,bold", penwidth="2",
-                width="0.8", height="0.8", fixedsize="true"
-            )
-        else:
-            fillcolor, fontcolor = "#90CAF9", "black"
-            cnt = int(event_freq.get(node, 0)) if event_freq else 0
-            node_label = str(node).replace("_", "\n")
-            label = f"{node_label}\n{cnt}" if cnt > 0 else node_label
-            dot.node(
-                str(node), label=label,
-                fillcolor=fillcolor, color="#1E88E5", fontcolor=fontcolor,
-                shape="ellipse", style="filled"
-            )
-
-    for u, v, data in G.edges(data=True):
-        p = data.get("prob", 0.0)
-        color = "#0D47A1" if p > 0.4 else "#1565C0" if p > 0.2 else "#64B5F6"
-        dot.edge(str(u), str(v), label=f"{p:.2f}", color=color, penwidth=str(1.2 + p * 5))
-
-    title = f"Markov Graph — {user_label}"
-    if title_suffix:
-        title += f" ({title_suffix})"
-    dot.attr(label=title, labelloc="t", fontsize="14", fontname="Helvetica-Bold")
-    dot.graph_attr.update(dpi="400")
-
-    ensure_dir(os.path.dirname(output_path))
-    dot.render(output_path.replace(".png", ""), cleanup=True)
 
 
 # ---------- Team graphs ----------
