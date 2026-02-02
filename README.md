@@ -491,7 +491,7 @@ processAnalysis/
 │   │   ├── label_refactor_size.py
 │   │   ├── label_repo_status.py
 │   │   ├── label_pr_status.py
-│   │   └── clean_lables.py             # Optional PR-level-only cleaner
+│   │   └── clean_labels.py             # Optional PR-level-only cleaner
 │   ├── PR/
 │   │   ├── pr_label.py
 │   │   ├── helpers_pr.py
