@@ -236,7 +236,7 @@ def main():
     render_team_graphs(overall_df, avg_df, freq_map)
     render_cluster_graphs(avg_df, freq_map, sess_count)
 
-    print(f"\n[✅ DONE] Graphs written under: {PR_OUT_DIR}")
+    print(f"\n[DONE] Graphs written under: {PR_OUT_DIR}")
 
 
 if __name__ == "__main__":
