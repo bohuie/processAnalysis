@@ -63,7 +63,6 @@ def explode_and_sort_events(df: pd.DataFrame, keep_row_idx: bool = False) -> pd.
     """
     Expects columns: pr_id, timestamp, event
     Returns: pr_id, timestamp, event (exploded to 1 row per event)
-    If keep_row_idx=True, also returns _row_idx so you can align other exploded cols (e.g. user).
     """
     df = df.copy()
 

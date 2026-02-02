@@ -80,9 +80,7 @@ OUT_FOLDER = CONFIG["output_folder"]
 os.makedirs(OUT_FOLDER, exist_ok=True)
 
 
-# ============================================================
-# Timestamp helpers (from your clean-pr-label logic)
-# ============================================================
+# Timestamp helpers
 def parse_event_cell(ev) -> list[str]:
     """
     Original CSV stores events like "['reviewed_merge']" (string).

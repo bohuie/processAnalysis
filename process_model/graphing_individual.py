@@ -142,7 +142,7 @@ def main():
 
     render_user_graphs(overall_df, avg_df, freq_map)
 
-    print(f"\n[✅ DONE] Individual graphs written under: {OUT_USERS_ROOT}")
+    print(f"\n[DONE] Individual graphs written under: {OUT_USERS_ROOT}")
 
 
 if __name__ == "__main__":
