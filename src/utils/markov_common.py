@@ -1,5 +1,3 @@
-# process_model/_markov_common.py
-
 import os
 import re
 import ast
@@ -36,7 +34,6 @@ def slugify_user(u: str) -> str:
 # ---------- event parsing ----------
 def normalize_event_field(event):
     """
-    Old-graphing behavior:
       - if event looks like a list string: "['a','b']" -> ['a','b']
       - otherwise: 'a' -> ['a']
     """
@@ -62,17 +59,21 @@ def normalize_event_field(event):
     return [s]
 
 
-def explode_and_sort_events(df: pd.DataFrame) -> pd.DataFrame:
+def explode_and_sort_events(df: pd.DataFrame, keep_row_idx: bool = False) -> pd.DataFrame:
     """
     Expects columns: pr_id, timestamp, event
     Returns: pr_id, timestamp, event (exploded to 1 row per event)
+    If keep_row_idx=True, also returns _row_idx so you can align other exploded cols (e.g. user).
     """
     df = df.copy()
 
     df["pr_id"] = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
     df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
 
-    df["_row_idx"] = np.arange(len(df))
+    # preserve existing row order key if caller already set it
+    if "_row_idx" not in df.columns:
+        df["_row_idx"] = np.arange(len(df))
+
     df["event_list"] = df["event"].apply(normalize_event_field)
     df = df.explode("event_list", ignore_index=True)
     df["event"] = df["event_list"].astype(str).str.strip()
@@ -81,11 +82,14 @@ def explode_and_sort_events(df: pd.DataFrame) -> pd.DataFrame:
     df = df[df["event"].ne("")]
     df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
 
-    return df[["pr_id", "timestamp", "event"]]
+    cols = ["pr_id", "timestamp", "event"]
+    if keep_row_idx:
+        cols.append("_row_idx")
+    return df[cols]
 
 
 # ---------- transition edges ----------
-def compute_overall_edges_old_style(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
+def compute_overall_edges(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
     edge_counter = {}
     n_sessions = 0
 
@@ -104,7 +108,7 @@ def compute_overall_edges_old_style(df: pd.DataFrame) -> tuple[pd.DataFrame, int
     return overall_edges, n_sessions
 
 
-def compute_avg_session_edges_old_style(df: pd.DataFrame, n_sessions: int) -> pd.DataFrame:
+def compute_avg_session_edges(df: pd.DataFrame, n_sessions: int) -> pd.DataFrame:
     edge_counter = {}
     if n_sessions == 0:
         return pd.DataFrame(columns=["from", "to", "count"])
