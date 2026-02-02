@@ -1,9 +1,16 @@
 import os, re, glob
 import pandas as pd
 import numpy as np
-import ast
 from pathlib import Path
 from dotenv import load_dotenv
+
+from src.utils.markov_common import (
+    normalize_event_field,
+    explode_and_sort_events,
+    compute_overall_edges,
+    compute_avg_session_edges,
+    add_transition_probs,
+)
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
@@ -90,28 +97,6 @@ def parse_team_name_and_number(fp: str) -> tuple[str, str]:
     return team_name, team_number
 
 
-def normalize_event_field(event):
-    if pd.isna(event):
-        return []
-    if isinstance(event, list):
-        return [str(x).strip() for x in event if str(x).strip()]
-
-    s = str(event).strip()
-    if not s:
-        return []
-
-    if s.startswith("[") and s.endswith("]"):
-        try:
-            parsed = ast.literal_eval(s)
-            if isinstance(parsed, list):
-                return [str(x).strip() for x in parsed if str(x).strip()]
-            return [str(parsed).strip()]
-        except Exception:
-            return [s]
-
-    return [s]
-
-
 def _norm_user(x) -> str:
     if pd.isna(x):
         return ""
@@ -147,94 +132,76 @@ def derive_user_column_for_pr_labels(df: pd.DataFrame) -> pd.Series:
         np.where(src_norm == "review", author_norm, np.where(pr_author_norm != "", pr_author_norm, author_norm)),
     )
 
-    # final cleanup
-    user = pd.Series(user, index=df.index).astype(str).str.strip().replace({"nan": ""})
-    return user
+    return pd.Series(user, index=df.index).astype(str).str.strip().replace({"nan": ""})
 
 
-def load_csv_with_user(fp: str, file_source: str) -> pd.DataFrame:
-    df = pd.read_csv(fp, low_memory=False)
+def _explode_with_row_idx(raw: pd.DataFrame) -> pd.DataFrame:
+    """
+    Local explode that matches old behavior (and includes _row_idx so user stays aligned).
+    """
+    df = raw.copy()
 
-    required = {"pr_id", "timestamp", "event"}
-    missing = required - set(df.columns)
-    if missing:
-        raise ValueError(f"{fp} missing columns: {missing}")
+    # stable row ordering key
+    if "_row_idx" not in df.columns:
+        df["_row_idx"] = np.arange(len(df))
 
-    df["pr_id"] = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-    df["_row_idx"] = np.arange(len(df))
-
-    # parse/explode events (same as old behavior)
     df["event_list"] = df["event"].apply(normalize_event_field)
     df = df.explode("event_list", ignore_index=True)
     df["event"] = df["event_list"].astype(str).str.strip()
 
+    df["pr_id"] = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
+    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+
     df = df.dropna(subset=["pr_id", "timestamp"])
     df = df[df["event"].ne("")]
+
     df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
+    return df
 
-    # user column
+
+def load_csv_with_user(fp: str, file_source: str) -> pd.DataFrame:
+    raw = pd.read_csv(fp, low_memory=False)
+
+    required = {"pr_id", "timestamp", "event"}
+    missing = required - set(raw.columns)
+    if missing:
+        raise ValueError(f"{fp} missing columns: {missing}")
+
+    # derive user BEFORE explode
     if file_source == "branching":
-        if "pr_author" not in df.columns:
+        if "pr_author" not in raw.columns:
             raise ValueError(f"{fp} missing required column for branching: pr_author")
-        df["user"] = df["pr_author"].apply(_norm_user)
+        raw["user"] = raw["pr_author"].apply(_norm_user)
     else:
-        df["user"] = derive_user_column_for_pr_labels(df)
+        raw["user"] = derive_user_column_for_pr_labels(raw)
 
-    # drop empty users
-    df["user"] = df["user"].astype(str).str.strip()
-    df = df[df["user"].ne("")]
+    raw["user"] = raw["user"].astype(str).str.strip()
+    raw = raw[raw["user"].ne("")].copy()
 
-    return df[["pr_id", "timestamp", "event", "user"]]
+    # keep original order key
+    raw["_row_idx"] = np.arange(len(raw))
 
+    # 1) explode events using shared helper (preferred)
+    #    We try keep_row_idx=True if your common helper supports it.
+    try:
+        events_only = explode_and_sort_events(raw, keep_row_idx=True)  # type: ignore[arg-type]
+    except TypeError:
+        # common helper doesn't support keep_row_idx yet → use local explode for events
+        tmp = _explode_with_row_idx(raw)
+        events_only = tmp[["pr_id", "timestamp", "event", "_row_idx"]].copy()
 
-def compute_overall_edges_old_style(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    edge_counter = {}
-    n_sessions = 0
+    # 2) explode user in the EXACT same shape/order so it aligns 1:1
+    raw_u = _explode_with_row_idx(raw)
 
-    for pr_id, g in df.groupby("pr_id", sort=False):
-        events = g["event"].tolist()
-        if len(events) < 1:
-            continue
-        n_sessions += 1
-        for i in range(len(events) - 1):
-            a, b = events[i], events[i + 1]
-            edge_counter[(a, b)] = edge_counter.get((a, b), 0) + 1
+    # safety: if shapes don't match (shouldn't happen), fall back to raw_u as source of truth
+    if len(events_only) != len(raw_u):
+        events_only = raw_u[["pr_id", "timestamp", "event", "_row_idx"]].copy()
 
-    overall_edges = pd.DataFrame(
-        [{"from": a, "to": b, "count": c} for (a, b), c in edge_counter.items()]
-    )
-    return overall_edges, n_sessions
+    out = events_only.reset_index(drop=True).copy()
+    out["user"] = raw_u["user"].astype(str).str.strip().fillna("").reset_index(drop=True)
+    out = out[out["user"].ne("")]
 
-
-def compute_avg_session_edges_old_style(df: pd.DataFrame, n_sessions: int) -> pd.DataFrame:
-    edge_counter = {}
-    if n_sessions == 0:
-        return pd.DataFrame(columns=["from", "to", "count"])
-
-    for pr_id, g in df.groupby("pr_id", sort=False):
-        events = g["event"].tolist()
-        if len(events) < 1:
-            continue
-        seq = ["START"] + events + ["END"]
-        for i in range(len(seq) - 1):
-            a, b = seq[i], seq[i + 1]
-            edge_counter[(a, b)] = edge_counter.get((a, b), 0) + 1
-
-    avg_edges = pd.DataFrame(
-        [{"from": a, "to": b, "count": c / n_sessions} for (a, b), c in edge_counter.items()]
-    )
-    return avg_edges
-
-
-def add_transition_probs(edges: pd.DataFrame) -> pd.DataFrame:
-    if edges.empty:
-        return edges.assign(prob=[])
-    edges = edges.copy()
-    edges["count"] = edges["count"].astype(float)
-    denom = edges.groupby("from")["count"].transform("sum")
-    edges["prob"] = np.where(denom > 0, edges["count"] / denom, 0.0)
-    return edges
+    return out[["pr_id", "timestamp", "event", "user"]]
 
 
 # ============================================================
@@ -262,8 +229,8 @@ def main():
             freq.insert(0, "team_name", team_name)
             all_freq.append(freq)
 
-            overall_edges, n_sessions = compute_overall_edges_old_style(udf)
-            avg_edges = compute_avg_session_edges_old_style(udf, n_sessions=n_sessions)
+            overall_edges, n_sessions = compute_overall_edges(udf)
+            avg_edges = compute_avg_session_edges(udf, n_sessions=n_sessions)
 
             overall_edges = add_transition_probs(overall_edges)
             avg_edges = add_transition_probs(avg_edges)

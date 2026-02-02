@@ -6,8 +6,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from src.utils.markov_common import (
     explode_and_sort_events,
-    compute_overall_edges_old_style,
-    compute_avg_session_edges_old_style,
+    compute_overall_edges,
+    compute_avg_session_edges,
     add_transition_probs,
 )
 
@@ -123,8 +123,8 @@ def main():
         freq.insert(0, "team_name", team_name)
         all_freq.append(freq)
 
-        overall_edges, n_sessions = compute_overall_edges_old_style(df)
-        avg_edges = compute_avg_session_edges_old_style(df, n_sessions=n_sessions)
+        overall_edges, n_sessions = compute_overall_edges(df)
+        avg_edges = compute_avg_session_edges(df, n_sessions=n_sessions)
 
         overall_edges = add_transition_probs(overall_edges)
         avg_edges = add_transition_probs(avg_edges)
