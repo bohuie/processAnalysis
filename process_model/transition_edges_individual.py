@@ -1,6 +1,10 @@
-import os, re, glob
-import pandas as pd
+from __future__ import annotations
+
+import os
+import re
+import glob
 import numpy as np
+import pandas as pd
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -12,8 +16,13 @@ from src.utils.markov_common import (
     add_transition_probs,
 )
 
+MERGE_EVENTS = {"reviewed_merge", "self_merge"}
+NO_MERGE_EVENTS = {"no_merge"}
+
+
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
+
 
 # ============================================================
 # CONFIGURATION SWITCH - Choose which files to process
@@ -27,9 +36,9 @@ print(f"[DEBUG] Looking for .env at: {env_path}")
 print(f"[DEBUG] .env exists: {env_path.exists()}")
 
 load_dotenv(dotenv_path=env_path)
-
 FILE_SOURCE = os.getenv("FILE_SOURCE")
 print(f"[DEBUG] FILE_SOURCE = {FILE_SOURCE}")
+
 
 # ----------------------------
 # Configs
@@ -37,7 +46,6 @@ print(f"[DEBUG] FILE_SOURCE = {FILE_SOURCE}")
 BRANCHING_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "graph_labels"),
     "pattern": "*_labels_branching_and_structure.csv",
-    # supports both CLEAN_ and non-clean
     "regex": re.compile(
         r"^(?:CLEAN_)?(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
         re.IGNORECASE,
@@ -48,7 +56,6 @@ BRANCHING_CONFIG = {
 
 PR_LABELS_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "csv"),
-    # supports both "pr_labels_year-long-project-team-15.csv" and "CLEAN_pr_labels_year-long-project-team-15.csv"
     "pattern": "*year-long-project-team-*.csv",
     "regex": re.compile(
         r"^(?:CLEAN_)?(?:pr_labels_)?(year-long-project-team-\d+)\.csv$",
@@ -74,7 +81,92 @@ os.makedirs(OUT_FOLDER, exist_ok=True)
 
 
 # ============================================================
-# Helpers
+# Timestamp helpers (from your clean-pr-label logic)
+# ============================================================
+def parse_event_cell(ev) -> list[str]:
+    """
+    Original CSV stores events like "['reviewed_merge']" (string).
+    This returns a real list[str]. If it's already a string label, returns [label].
+    """
+    import ast  # local import is fine; not a nested function
+
+    if ev is None or (isinstance(ev, float) and pd.isna(ev)):
+        return []
+
+    if isinstance(ev, list):
+        return [e for e in ev if isinstance(e, str)]
+
+    if isinstance(ev, str):
+        s = ev.strip()
+        if s.startswith("[") and s.endswith("]"):
+            try:
+                parsed = ast.literal_eval(s)
+                if isinstance(parsed, list):
+                    return [e for e in parsed if isinstance(e, str)]
+            except Exception:
+                pass
+        return [s]
+
+    return []
+
+
+def pick_timestamp_row(row: pd.Series, events: list[str]) -> str | None:
+    """
+    Timestamp rules:
+    - default: created_at
+    - if reviewed_merge/self_merge: merged_at
+    - if no_merge: updated_at
+    If chosen col missing/NaN, fall back to created_at.
+    """
+    use_col = "created_at"
+    if any(e in MERGE_EVENTS for e in events):
+        use_col = "merged_at"
+    elif any(e in NO_MERGE_EVENTS for e in events):
+        use_col = "updated_at"
+
+    val = row.get(use_col, None)
+    if val is None or (isinstance(val, float) and pd.isna(val)) or (isinstance(val, str) and not val.strip()):
+        val = row.get("created_at", None)
+
+    if val is None or (isinstance(val, float) and pd.isna(val)) or (isinstance(val, str) and not val.strip()):
+        return None
+
+    dt = pd.to_datetime(val, errors="coerce", utc=True)
+    if pd.isna(dt):
+        return str(val)
+
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def ensure_timestamp_column(df: pd.DataFrame, fp: str) -> pd.DataFrame:
+    """
+    If df already has 'timestamp', keep it.
+    Else create df['timestamp'] from created_at/updated_at/merged_at using event-based rules.
+    """
+    if "timestamp" in df.columns:
+        return df
+
+    # We need at least created_at to do anything sensible.
+    if "created_at" not in df.columns:
+        raise KeyError(
+            f"{fp} has no 'timestamp' column and is missing 'created_at', so we can't derive timestamps.\n"
+            f"Columns found: {sorted(df.columns)}"
+        )
+
+    # updated_at / merged_at may be missing in some datasets — we allow that (fallback to created_at).
+    timestamps: list[str | None] = []
+    for _, row in df.iterrows():
+        events = parse_event_cell(row.get("event"))
+        ts = pick_timestamp_row(row, events)
+        timestamps.append(ts)
+
+    out = df.copy()
+    out["timestamp"] = timestamps
+    return out
+
+
+# ============================================================
+# Other helpers
 # ============================================================
 def discover_team_files() -> list[str]:
     search_pattern = os.path.join(DATA_FOLDER, CONFIG["pattern"])
@@ -97,7 +189,7 @@ def parse_team_name_and_number(fp: str) -> tuple[str, str]:
     return team_name, team_number
 
 
-def _norm_user(x) -> str:
+def norm_user(x) -> str:
     if pd.isna(x):
         return ""
     return str(x).strip()
@@ -129,73 +221,83 @@ def derive_user_column_for_pr_labels(df: pd.DataFrame) -> pd.Series:
     user = np.where(
         (src_norm == "") | (src_norm == "pr"),
         pr_author_norm,
-        np.where(src_norm == "review", author_norm, np.where(pr_author_norm != "", pr_author_norm, author_norm)),
+        np.where(
+            src_norm == "review",
+            author_norm,
+            np.where(pr_author_norm != "", pr_author_norm, author_norm),
+        ),
     )
 
     return pd.Series(user, index=df.index).astype(str).str.strip().replace({"nan": ""})
 
 
-def _explode_with_row_idx(raw: pd.DataFrame) -> pd.DataFrame:
+def explode_events_with_extras(df: pd.DataFrame, extra_cols: list[str]) -> pd.DataFrame:
     """
-    Local explode that matches old behavior (and includes _row_idx so user stays aligned).
+    Explodes `event` using the same parsing as normalize_event_field, while preserving
+    extra columns (e.g., 'user') and stable ordering via _row_idx.
     """
-    df = raw.copy()
+    out = df.copy()
 
-    # stable row ordering key
-    if "_row_idx" not in df.columns:
-        df["_row_idx"] = np.arange(len(df))
+    # pr_id and timestamp must exist here
+    out["pr_id"] = pd.to_numeric(out["pr_id"], errors="coerce").astype("Int64")
+    out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce", utc=True)
 
-    df["event_list"] = df["event"].apply(normalize_event_field)
-    df = df.explode("event_list", ignore_index=True)
-    df["event"] = df["event_list"].astype(str).str.strip()
+    if "_row_idx" not in out.columns:
+        out["_row_idx"] = np.arange(len(out))
 
-    df["pr_id"] = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+    out["event_list"] = out["event"].apply(normalize_event_field)
+    out = out.explode("event_list", ignore_index=True)
+    out["event"] = out["event_list"].astype(str).str.strip()
 
-    df = df.dropna(subset=["pr_id", "timestamp"])
-    df = df[df["event"].ne("")]
+    out = out.dropna(subset=["pr_id", "timestamp"])
+    out = out[out["event"].ne("")]
+    out = out.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
 
-    df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
-    return df
+    keep = ["pr_id", "timestamp", "event", "_row_idx"] + extra_cols
+    keep = [c for c in keep if c in out.columns]
+    return out[keep]
 
 
 def load_csv_with_user(fp: str, file_source: str) -> pd.DataFrame:
     raw = pd.read_csv(fp, low_memory=False)
 
-    required = {"pr_id", "timestamp", "event"}
+    required = {"pr_id", "event"}
     missing = required - set(raw.columns)
     if missing:
         raise ValueError(f"{fp} missing columns: {missing}")
 
-    # derive user BEFORE explode
+    # Ensure timestamp exists (derive if needed)
+    raw = ensure_timestamp_column(raw, fp)
+
+    # Drop rows where derived timestamp failed
+    raw["timestamp"] = raw["timestamp"].astype(str).replace({"nan": ""}).str.strip()
+    raw = raw[raw["timestamp"].ne("")].copy()
+
+    # Derive user column
     if file_source == "branching":
         if "pr_author" not in raw.columns:
             raise ValueError(f"{fp} missing required column for branching: pr_author")
-        raw["user"] = raw["pr_author"].apply(_norm_user)
+        raw["user"] = raw["pr_author"].apply(norm_user)
     else:
         raw["user"] = derive_user_column_for_pr_labels(raw)
 
     raw["user"] = raw["user"].astype(str).str.strip()
     raw = raw[raw["user"].ne("")].copy()
 
-    # keep original order key
+    # Stable ordering
     raw["_row_idx"] = np.arange(len(raw))
 
-    # 1) explode events using shared helper (preferred)
-    #    We try keep_row_idx=True if your common helper supports it.
-    try:
-        events_only = explode_and_sort_events(raw, keep_row_idx=True)  # type: ignore[arg-type]
-    except TypeError:
-        # common helper doesn't support keep_row_idx yet → use local explode for events
-        tmp = _explode_with_row_idx(raw)
-        events_only = tmp[["pr_id", "timestamp", "event", "_row_idx"]].copy()
+    # Explode events using shared helper (returns pr_id,timestamp,event + _row_idx)
+    events_only = explode_and_sort_events(raw, keep_row_idx=True)
 
-    # 2) explode user in the EXACT same shape/order so it aligns 1:1
-    raw_u = _explode_with_row_idx(raw)
+    # Explode with user preserved in same ordering
+    raw_u = explode_events_with_extras(raw, extra_cols=["user"])
 
-    # safety: if shapes don't match (shouldn't happen), fall back to raw_u as source of truth
+    # Align safety: if something went wrong, raw_u is the source of truth
     if len(events_only) != len(raw_u):
-        events_only = raw_u[["pr_id", "timestamp", "event", "_row_idx"]].copy()
+        out = raw_u[["pr_id", "timestamp", "event", "user"]].copy()
+        out["user"] = out["user"].astype(str).str.strip()
+        return out[out["user"].ne("")]
 
     out = events_only.reset_index(drop=True).copy()
     out["user"] = raw_u["user"].astype(str).str.strip().fillna("").reset_index(drop=True)
@@ -213,13 +315,15 @@ def main():
     for f in files:
         print(" -", f)
 
-    all_overall, all_avg, all_freq, sessions_rows = [], [], [], []
+    all_overall: list[pd.DataFrame] = []
+    all_avg: list[pd.DataFrame] = []
+    all_freq: list[pd.DataFrame] = []
+    sessions_rows: list[dict] = []
 
     for fp in files:
         team_name, team_number = parse_team_name_and_number(fp)
         df = load_csv_with_user(fp, FILE_SOURCE)
 
-        # split by user (individual-level)
         for user, udf in df.groupby("user", sort=False):
             # event frequency (per user)
             freq = udf["event"].value_counts().reset_index()
