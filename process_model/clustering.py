@@ -53,6 +53,31 @@ def build_team_matrix(df: pd.DataFrame, z_threshold: float):
     return teams, pairs, X
 
 
+def compute_elbow_scores(X: np.ndarray, k_min=2, k_max=10):
+    """Compute inertia (within-cluster sum of squares) for elbow method.
+    
+    Args:
+        X: Data matrix (n_samples, n_features)
+        k_min: Minimum number of clusters
+        k_max: Maximum number of clusters
+    
+    Returns:
+        Dictionary with k values and corresponding inertias
+    """
+    n = X.shape[0]
+    k_max = min(k_max, n - 1)
+    
+    elbow_data = {"k": [], "inertia": []}
+    
+    for k in range(k_min, k_max + 1):
+        km = KMeans(n_clusters=k, n_init=25, random_state=42)
+        km.fit(X)
+        elbow_data["k"].append(k)
+        elbow_data["inertia"].append(km.inertia_)
+    
+    return elbow_data
+
+
 def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
     n = X.shape[0]
     if n < 3:
@@ -112,6 +137,7 @@ def main():
 
         print("[INFO] Performing clustering...")
         best_k, best_sil = choose_best_k(X)
+        elbow_scores = compute_elbow_scores(X)
         km = KMeans(n_clusters=best_k, n_init=25, random_state=42)
         clusters = km.fit_predict(X)
 
@@ -123,6 +149,12 @@ def main():
         })
         out.to_csv(out_fp, index=False)
         print(f"[OK] Wrote: {out_fp}")
+        
+        # Save elbow scores
+        elbow_fp = os.path.join(data_dir, f"elbow_scores_{cluster_suffix}.csv")
+        elbow_df = pd.DataFrame(elbow_scores)
+        elbow_df.to_csv(elbow_fp, index=False)
+        print(f"[OK] Wrote: {elbow_fp}")
 
 if __name__ == "__main__":
     main()
