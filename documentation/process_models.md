@@ -265,11 +265,11 @@ If any of these files are missing, the script degrades gracefully and skips the 
 
 ### Configuration (Environment Variables)
 
-| Variable            | Default        | Description                                                                   |
-| :------------------ | :------------- | :---------------------------------------------------------------------------- |
-| `GRAPH_ORIENTATION` | `horizontal`   | `vertical` for Top-to-Bottom, `horizontal` for Left-to-Right.                 |
-| `GRAPH_SIZE`        | `12,6` (horiz) | Custom Graphviz size string (e.g., `"8,5"`).                                  |
-| `MIN_EDGE_PROB`     | `0.0`          | Hide **visual** edges below this probability (e.g., `0.05`). Model unchanged. |
+| Variable            | Default        | Description                                                                                                                |
+| :------------------ | :------------- | :------------------------------------------------------------------------------------------------------------------------- |
+| `GRAPH_ORIENTATION` | `horizontal`   | `vertical` for Top-to-Bottom, `horizontal` for Left-to-Right.                                                              |
+| `GRAPH_SIZE`        | `12,6` (horiz) | Custom Graphviz size string (e.g., `"8,5"`).                                                                               |
+| MIN_EDGE_PROB       | 0.0            | Hides edges in the **visual** PNG output below this probability. Does **not** affect clustering or underlying data models. |
 
 ### Team graph outputs
 
@@ -289,7 +289,7 @@ This is done by:
 - converting counts into transition probabilities (per “from” node)
 - drawing nodes; `START` and `END` get special styling; other nodes show event count if available.
 
-**Edge filtering:** transitions with `prob < 0.01` are omitted to keep graphs readable.
+**Edge filtering:** transitions with `prob < MIN_EDGE_PROB` are omitted from the graph to keep it readable (this is a visual-only filter).
 
 ### Cluster graph outputs (optional)
 
