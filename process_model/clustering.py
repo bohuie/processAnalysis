@@ -52,7 +52,7 @@ FILTERED_EDGES_OUT_FP = os.path.join(
     DATA_DIR, f"team_transition_edges_avg_session_zfiltered_{CLUSTER_SUFFIX}.csv"
 )
 
-Z_THRESHOLD = 1.645  # chosen here (not buried inside filtering)
+Z_THRESHOLD = 1.645  # default is 1.645 for 90% confidence can adjust to 1.96 for 95% confidence
 
 
 def filter_edges_by_zscore(df: pd.DataFrame, cutoff: float) -> pd.DataFrame:
