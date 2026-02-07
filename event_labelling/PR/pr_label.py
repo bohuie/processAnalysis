@@ -4,7 +4,7 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 from datetime import datetime
-from event_labelling.PR.get_clean_pr_label import create_clean_pr_label_csv
+from process_model.clean import create_clean_pr_label_csv
 
 # utility imports
 from src.utils.normalize_pr_id import normalize_pr_ids
