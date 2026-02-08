@@ -2,14 +2,9 @@ import os, re, glob
 import pandas as pd
 import numpy as np
 import ast
-from pathlib import Path
-from dotenv import load_dotenv
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# Load .env (for other config if needed)
-load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Configuration for both datasets
 CONFIGS = {
@@ -21,7 +16,7 @@ CONFIGS = {
         "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv",
         "output_folder": os.path.join(ROOT, "data", "outputs", "branching")
     },
-    "pr_labels": {
+    "pr": {
         "data_folder": os.path.join(ROOT, "data", "csv"),
         "prefix": "CLEAN_pr_labels_",
         "pattern": "year-long-project-team-*.csv",
