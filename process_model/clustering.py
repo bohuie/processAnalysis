@@ -3,6 +3,33 @@ import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
+<<<<<<< HEAD
+=======
+from dotenv import load_dotenv
+
+# ============================================================
+# CONFIGURATION SWITCH - Choose which folder to process
+# ============================================================
+# Set to "branching" or "pr"
+# Can be set via environment variable: FOLDER_SOURCE=branching python ...
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
+
+# ============================================================
+# CONFIGURATION SWITCH - Choose which files to process
+# ============================================================
+script_path = Path(__file__).resolve()
+print(f"[DEBUG] Script location: {script_path}")
+
+env_path = script_path.parent.parent / '.env'
+print(f"[DEBUG] Looking for .env at: {env_path}")
+print(f"[DEBUG] .env exists: {env_path.exists()}")
+
+# Load it
+load_dotenv(dotenv_path=env_path)
+FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")  # default: "branching"
+# ============================================================
+>>>>>>> origin/dev
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
@@ -19,7 +46,23 @@ CONFIGS = {
     }
 }
 
-Z_THRESHOLD = 1.645  # pick in clustering, not zscore script
+MATRIX_OUT_FP = os.path.join(DATA_DIR, f"team_transition_matrix_{CLUSTER_SUFFIX}.csv")
+FILTERED_EDGES_OUT_FP = os.path.join(
+    DATA_DIR, f"team_transition_edges_avg_session_zfiltered_{CLUSTER_SUFFIX}.csv"
+)
+
+Z_THRESHOLD = 1.645  # default is 1.645 for 90% confidence can adjust to 1.96 for 95% confidence
+
+
+def filter_edges_by_zscore(df: pd.DataFrame, cutoff: float) -> pd.DataFrame:
+    """
+    Returns only edges with |z_score| >= cutoff (both tails).
+    cutoff is an input parameter (not hardcoded inside this function).
+    """
+    if "z_score" not in df.columns:
+        raise ValueError("Expected 'z_score' column in input; zscore_calculation.py should generate it.")
+    return df[df["z_score"].abs() >= cutoff].copy()
+
 
 def build_team_matrix(df: pd.DataFrame, z_threshold: float):
     df = df.copy()
@@ -32,20 +75,17 @@ def build_team_matrix(df: pd.DataFrame, z_threshold: float):
                    key=lambda x: int(x) if x.isdigit() else 999999)
     X = np.zeros((len(teams), len(pairs)), dtype=float)
 
-    # apply threshold here
-    if "z_score" in df.columns:
-        df = df[df["z_score"] >= z_threshold].copy()
-    else:
-        raise ValueError("Expected 'z_score' column in input; zscore_calculation.py should generate it.")
+    # ✅ apply threshold via function call
+    df_filt = filter_edges_by_zscore(df, cutoff=z_threshold)
 
     for ti, team in enumerate(teams):
-        g = df[df["team_number"].astype(str) == team]
+        g = df_filt[df_filt["team_number"].astype(str) == team]
         for _, r in g.iterrows():
             idx = pair_to_idx.get((r["from"], r["to"]))
             if idx is not None:
                 X[ti, idx] = float(r["count"])
 
-    return teams, pairs, X
+    return teams, pairs, X, df_filt
 
 
 def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
@@ -68,7 +108,9 @@ def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
 
     return best_k, best_score
 
+
 def main():
+<<<<<<< HEAD
     # Process both datasets
     for dataset_name, config in CONFIGS.items():
         print(f"\n{'='*70}")
@@ -118,6 +160,66 @@ def main():
         })
         out.to_csv(out_fp, index=False)
         print(f"[OK] Wrote: {out_fp}")
+=======
+    if not os.path.exists(IN_FP):
+        raise FileNotFoundError(
+            f"Missing required input: {IN_FP}\n"
+            f"Run zscore_calculation.py first with FOLDER_SOURCE='{FOLDER_SOURCE}'"
+        )
+
+    print(f"[INFO] Loading data from: {IN_FP}")
+    df = pd.read_csv(IN_FP, low_memory=False)
+
+    print("[INFO] Building team matrix...")
+    teams, pairs, X, df_filt = build_team_matrix(df, z_threshold=Z_THRESHOLD)
+
+    nonzero_mask = (X.sum(axis=1) > 0)
+    kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
+    X = X[nonzero_mask]
+
+    dropped = int((~nonzero_mask).sum())
+    if dropped:
+        print(f"[INFO] Dropped {dropped} teams with all-zero vectors at |z| ≥ {Z_THRESHOLD}")
+
+    # export z-filtered edges for kept teams
+    df_filt = df_filt.copy()
+    df_filt["team_number"] = df_filt["team_number"].astype(str)
+    df_filt_kept = df_filt[df_filt["team_number"].isin(set(map(str, kept_teams)))].copy()
+
+    cols_first = ["team_number", "from", "to", "count", "z_score"]
+    remaining = [c for c in df_filt_kept.columns if c not in cols_first]
+    df_filt_kept = df_filt_kept[cols_first + remaining]
+    df_filt_kept.to_csv(FILTERED_EDGES_OUT_FP, index=False)
+    print(f"[OK] Wrote z-filtered edges: {FILTERED_EDGES_OUT_FP}")
+
+    # export transition matrix
+    col_names = [f"{a}->{b}" for (a, b) in pairs]
+    matrix_df = pd.DataFrame(X, index=kept_teams, columns=col_names)
+    matrix_df.index.name = "team_number"
+    matrix_df.to_csv(MATRIX_OUT_FP)
+    print(f"[OK] Wrote transition matrix: {MATRIX_OUT_FP}")
+
+    if X.shape[0] < 2:
+        out = pd.DataFrame({"team_number": kept_teams, "cluster_id": [0] * len(kept_teams)})
+        out.to_csv(OUT_FP, index=False)
+        print(f"[OK] Wrote: {OUT_FP} (not enough teams to cluster)")
+        return
+
+    print("[INFO] Performing clustering...")
+    best_k, best_sil = choose_best_k(X)
+    km = KMeans(n_clusters=best_k, n_init=25, random_state=42)
+    clusters = km.fit_predict(X)
+
+    out = pd.DataFrame({
+        "team_number": kept_teams,
+        "cluster_id": clusters,
+        "k_used": best_k,
+        "silhouette": best_sil if best_sil is not None else np.nan,
+    })
+    out.to_csv(OUT_FP, index=False)
+    print(f"[OK] Wrote: {OUT_FP}")
+>>>>>>> origin/dev
+
 
 if __name__ == "__main__":
     main()

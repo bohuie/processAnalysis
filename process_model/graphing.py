@@ -11,6 +11,7 @@ from graphviz import Digraph
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
+<<<<<<< HEAD
 # Configuration for both datasets
 CONFIGS = {
     "branching": {
@@ -22,8 +23,57 @@ CONFIGS = {
         "category_label": "pr"
     }
 }
+=======
+# Determine input/output paths based on FOLDER_SOURCE
+if FOLDER_SOURCE == "branching":
+    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "branching")
+    CATEGORY_LABEL = "branching"
+    print("[CONFIG] Processing branching graphs from data/outputs/branching/")
+elif FOLDER_SOURCE == "pr":
+    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "pr")
+    CATEGORY_LABEL = "pr"
+    print("[CONFIG] Processing PR graphs from data/outputs/pr/")
+else:
+    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr'")
+
+IN_OVERALL_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_overall.csv")
+IN_AVG_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_avg_session.csv")
+IN_FREQ_FP = os.path.join(PR_OUT_DIR, "team_event_frequency.csv")
+IN_SESS_FP = os.path.join(PR_OUT_DIR, "team_transition_sessions_count.csv")
+IN_CLUSTER_FP = os.path.join(PR_OUT_DIR, f"behavior_clusters_{FOLDER_SOURCE}.csv")
+IN_ZFILT_FP = os.path.join(PR_OUT_DIR, f"team_transition_edges_avg_session_zfiltered_{FOLDER_SOURCE}.csv")
+
+OUT_TEAMS_DIR = PR_OUT_DIR
+OUT_CLUSTERS_DIR = os.path.join(PR_OUT_DIR, "clusters")
+
+>>>>>>> origin/dev
 
 # ---------- Tiny utils ----------
+def _wrap_team_list(teams: list[str], max_line_len: int = 70, max_teams: int = 40) -> str:
+    teams = [str(t) for t in teams]
+    n = len(teams)
+
+    if n > max_teams:
+        shown = teams[:max_teams]
+        suffix = f", … (+{n - max_teams} more)"
+    else:
+        shown = teams
+        suffix = ""
+
+    prefix = f"Teams (n={n}): "
+    lines = []
+    cur = prefix
+    for t in shown:
+        piece = ("" if cur.endswith(": ") else ", ") + t
+        if len(cur) + len(piece) > max_line_len and cur != prefix:
+            lines.append(cur)
+            cur = " " * len(prefix) + t
+        else:
+            cur += piece
+    lines.append(cur + suffix)
+    return "\n".join(lines)
+
+
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
 
@@ -78,7 +128,9 @@ def load_sessions_count_map(sess_fp: str) -> dict:
 
 
 # ---------- Rendering (same styling as old script) ----------
-def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suffix="", normalize_probs=True):
+def build_markov_graph(user_label, edges_df, event_freq, output_path,
+                       title_suffix="", normalize_probs=True,
+                       teams_in_cluster=None):
     edges_df = edges_df.copy()
     edges_df = edges_df[edges_df["count"] > 0]
     if edges_df.empty:
@@ -146,7 +198,11 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suff
     title = f"Markov Graph — {user_label}"
     if title_suffix:
         title += f" ({title_suffix})"
+    if teams_in_cluster:
+        title += "\n" + _wrap_team_list(teams_in_cluster)
+
     dot.attr(label=title, labelloc="t", fontsize="14", fontname="Helvetica-Bold")
+
     dot.graph_attr.update(dpi="400")
 
     ensure_dir(os.path.dirname(output_path))
@@ -190,11 +246,13 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
 
 
 # ---------- Cluster graphs (optional) ----------
-def _aggregate_cluster_avg_edges(avg_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
+def _aggregate_cluster_edges(edges_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
     """
-    Session-weighted cluster avg edges:
-      cluster_total_counts = sum(team_avg_count * team_num_sessions)
-      cluster_avg = cluster_total_counts / sum(team_num_sessions)
+    Session-weighted aggregation over an edge-list DF with columns:
+      team_number, from, to, count
+
+    cluster_total = sum(team_count * team_sessions)
+    cluster_avg   = cluster_total / sum(team_sessions)
     """
     total_weight = 0
     acc = {}
@@ -202,11 +260,10 @@ def _aggregate_cluster_avg_edges(avg_df: pd.DataFrame, teams: list[str], sess_co
     for t in teams:
         w = int(sess_count.get(t, 0))
         if w <= 0:
-            # fallback: treat as 1 so the team still contributes
             w = 1
         total_weight += w
 
-        sub = avg_df[avg_df["team_number"] == t]
+        sub = edges_df[edges_df["team_number"] == t]
         for _, r in sub.iterrows():
             key = (r["from"], r["to"])
             acc[key] = acc.get(key, 0.0) + float(r["count"]) * w
@@ -226,9 +283,15 @@ def _aggregate_cluster_event_freq(freq_map: dict, teams: list[str]) -> dict:
     return out
 
 
+<<<<<<< HEAD
 def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict, in_cluster_fp: str, out_clusters_dir: str, category_label: str):
     if not os.path.exists(in_cluster_fp):
         print(f"[INFO] No cluster CSV found at {in_cluster_fp} — skipping cluster graphs.")
+=======
+def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: dict):
+    if not os.path.exists(IN_CLUSTER_FP):
+        print(f"[INFO] No cluster CSV found at {IN_CLUSTER_FP} — skipping cluster graphs.")
+>>>>>>> origin/dev
         return
 
     cdf = pd.read_csv(in_cluster_fp, low_memory=False)
@@ -246,7 +309,7 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
     for cluster_id, g in cdf.groupby("cluster_id"):
         teams = sorted(g["team_number"].tolist(), key=lambda x: int(x) if x.isdigit() else 999999)
 
-        cluster_edges = _aggregate_cluster_avg_edges(avg_df, teams, sess_count)
+        cluster_edges = _aggregate_cluster_edges(zfilt_df, teams, sess_count)
         cluster_freq = _aggregate_cluster_event_freq(freq_map, teams)
 
         # match old naming style: cluster1, cluster2, ...
@@ -259,11 +322,18 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
             edges_df=cluster_edges,
             event_freq=cluster_freq,
             output_path=os.path.join(cdir, "cluster_avg_session.png"),
+<<<<<<< HEAD
             title_suffix=f"Avg Session • {category_label}",
+=======
+            title_suffix=f"Z-filtered Avg Session • {CATEGORY_LABEL}",
+            teams_in_cluster=teams,
+>>>>>>> origin/dev
         )
 
 
+
 def main():
+<<<<<<< HEAD
     # Process both datasets
     for dataset_name, config in CONFIGS.items():
         print(f"\n{'='*70}")
@@ -282,6 +352,44 @@ def main():
         # Check required files
         required_files = [in_overall_fp, in_avg_fp, in_freq_fp, in_sess_fp, in_cluster_fp]
         missing = [f for f in required_files if not os.path.exists(f)]
+=======
+    print(f"\n[INFO] Looking for input files in: {PR_OUT_DIR}")
+    
+    for fp in [IN_OVERALL_FP, IN_AVG_FP]:
+        if not os.path.exists(fp):
+            raise FileNotFoundError(
+                f"Missing required input: {fp}\n"
+                f"Run transition_matrix.py first with FILE_SOURCE='{FOLDER_SOURCE}'"
+            )
+
+    overall_df = pd.read_csv(IN_OVERALL_FP, low_memory=False)
+    avg_df = pd.read_csv(IN_AVG_FP, low_memory=False)
+    
+    if not os.path.exists(IN_ZFILT_FP):
+        raise FileNotFoundError(
+            f"Missing required input: {IN_ZFILT_FP}\n"
+            f"Run clustering.py first to generate the z-filtered edges export."
+        )
+
+    zfilt_df = pd.read_csv(IN_ZFILT_FP, low_memory=False)
+
+    # normalize like the others
+    required = {"team_number", "from", "to", "count"}
+    missing = required - set(zfilt_df.columns)
+    if missing:
+        raise ValueError(f"Missing columns in z-filtered edges CSV: {missing}")
+
+    zfilt_df["team_number"] = zfilt_df["team_number"].apply(_as_str_team)
+    zfilt_df["from"] = zfilt_df["from"].astype(str)
+    zfilt_df["to"] = zfilt_df["to"].astype(str)
+    zfilt_df["count"] = pd.to_numeric(zfilt_df["count"], errors="coerce").fillna(0.0).astype(float)
+
+
+    # normalize team_number to string
+    for df in [overall_df, avg_df]:
+        required = {"team_number", "from", "to", "count"}
+        missing = required - set(df.columns)
+>>>>>>> origin/dev
         if missing:
             print(f"[SKIP] Missing required files:")
             for f in missing:
@@ -305,6 +413,7 @@ def main():
             df["to"] = df["to"].astype(str)
             df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
 
+<<<<<<< HEAD
         freq_map = load_event_freq_map(in_freq_fp)
         sess_count = load_sessions_count_map(in_sess_fp)
         
@@ -313,6 +422,11 @@ def main():
         ensure_dir(out_base_dir)
         out_teams_dir = out_base_dir
         out_clusters_dir = os.path.join(out_base_dir, "clusters")
+=======
+    render_team_graphs(overall_df, avg_df, freq_map)
+    render_cluster_graphs(zfilt_df, freq_map, sess_count)
+
+>>>>>>> origin/dev
 
         print(f"[INFO] Rendering team graphs...")
         render_team_graphs(overall_df, avg_df, freq_map, out_teams_dir, category_label)
