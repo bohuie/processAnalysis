@@ -137,7 +137,11 @@ def main():
 
         print("[INFO] Performing clustering...")
         best_k, best_sil = choose_best_k(X)
-        elbow_scores = compute_elbow_scores(X)
+        elbow_scores = None
+        if X.shape[0] >= 3:
+            elbow_scores = compute_elbow_scores(X)
+        else:
+            print("[INFO] Skipping elbow scores (need >= 3 teams).")
         km = KMeans(n_clusters=best_k, n_init=25, random_state=42)
         clusters = km.fit_predict(X)
 
@@ -151,10 +155,13 @@ def main():
         print(f"[OK] Wrote: {out_fp}")
         
         # Save elbow scores
-        elbow_fp = os.path.join(data_dir, f"elbow_scores_{cluster_suffix}.csv")
-        elbow_df = pd.DataFrame(elbow_scores)
-        elbow_df.to_csv(elbow_fp, index=False)
-        print(f"[OK] Wrote: {elbow_fp}")
+        if elbow_scores and elbow_scores.get("k"):
+            elbow_fp = os.path.join(data_dir, f"elbow_scores_{cluster_suffix}.csv")
+            elbow_df = pd.DataFrame(elbow_scores)
+            elbow_df.to_csv(elbow_fp, index=False)
+            print(f"[OK] Wrote: {elbow_fp}")
+        else:
+            print("[INFO] Skipping elbow CSV (no valid k range).")
 
 if __name__ == "__main__":
     main()
