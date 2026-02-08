@@ -29,7 +29,7 @@ from graphviz import Digraph
 # EDIT THESE IF YOU WANT
 # =========================
 TEAM_NUMBER: str | None = None     # e.g. "7" (if None, you'll be prompted)
-Z_THRESHOLD: float = 1.645         # 1.645 ≈ 90% two-tailed cutoff; try 1.96 for 95%
+Z_THRESHOLD: float = 1.645 # 1.645 ≈ 90% two-tailed cutoff; try 1.96 for 95%
 # =========================
 
 
