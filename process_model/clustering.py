@@ -1,16 +1,11 @@
 import os
-from pathlib import Path
 import numpy as np
 import pandas as pd
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from dotenv import load_dotenv
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# Load .env
-load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Configuration for both datasets
 CONFIGS = {
