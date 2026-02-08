@@ -47,8 +47,12 @@ elif FOLDER_SOURCE == "pr":
     PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "pr")
     CATEGORY_LABEL = "pr"
     print("[CONFIG] Processing PR graphs from data/outputs/pr/")
+elif FOLDER_SOURCE == "communication":
+    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "communication")
+    CATEGORY_LABEL = "communication"
+    print("[CONFIG] Processing communication graphs from data/outputs/communication/")
 else:
-    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr'")
+    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr' or 'communication'.")
 
 IN_OVERALL_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_overall.csv")
 IN_AVG_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_avg_session.csv")

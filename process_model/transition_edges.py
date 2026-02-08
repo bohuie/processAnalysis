@@ -50,6 +50,16 @@ PR_LABELS_CONFIG = {
     "output_folder": os.path.join(ROOT, "data", "outputs", "pr")
 }
 
+# Configuration for communication files
+COMM_CONFIG = {
+    "data_folder": os.path.join(ROOT, "data", "csv"),
+    "prefix": "CLEAN_communication_labels_",
+    "pattern": "year-long-project-team-*.csv",
+    "regex": re.compile(r"^CLEAN_communication_labels_(year-long-project-team-\d+)\.csv$", re.IGNORECASE),
+    "example": "CLEAN_communication_labels_year-long-project-team-7.csv",
+    "output_folder": os.path.join(ROOT, "data", "outputs", "communication")
+}
+
 # Select active configuration
 if FILE_SOURCE == "branching":
     CONFIG = BRANCHING_CONFIG
@@ -59,8 +69,12 @@ elif FILE_SOURCE == "pr_labels":
     CONFIG = PR_LABELS_CONFIG
     print("[CONFIG] Using pr_labels files from data/csv/")
     print(f"[CONFIG] Output will be saved to: {CONFIG['output_folder']}")
+elif FILE_SOURCE == "communication":
+    CONFIG = COMM_CONFIG
+    print("[CONFIG] Using communication files from data/communication/")
+    print(f"[CONFIG] Output will be saved to: {CONFIG['output_folder']}")
 else:
-    raise ValueError(f"Invalid FILE_SOURCE: {FILE_SOURCE}. Must be 'branching' or 'pr_labels'")
+    raise ValueError(f"Invalid FILE_SOURCE: {FILE_SOURCE}. Must be 'branching' or 'pr_labels' or 'communication'.")
 
 DATA_FOLDER = CONFIG["data_folder"]
 CLEAN_PREFIX = CONFIG["prefix"]
@@ -78,7 +92,7 @@ def discover_clean_team_files() -> list[str]:
             f"No CLEAN label CSVs found in {DATA_FOLDER}\n"
             f"Expected e.g.: {os.path.join(DATA_FOLDER, CONFIG['example'])}\n"
             f"Current FILE_SOURCE setting: '{FILE_SOURCE}'\n"
-            f"Change FILE_SOURCE in the script to switch between 'branching' and 'pr_labels'"
+            f"Change FILE_SOURCE in the script to switch between 'branching', 'pr_labels', and 'communication'"
         )
     return files
 
