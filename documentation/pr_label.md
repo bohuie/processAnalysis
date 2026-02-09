@@ -41,7 +41,7 @@ Implementation lives mainly in:
 - `review_helper.py` (review constructiveness + review attributes)
 - `llm_prompts.py` (constructiveness prompt + PR description labeler)
 - `helpers_pr.py` (bot filtering helpers + log PR detection helpers)
-- `process_model/clean.py` (imported) — Handles final event cleaning and timestamp selection for graph ingestion.
+- `src/utils/clean.py` (imported) — Handles final event cleaning and timestamp selection for graph ingestion.
 
 ---
 
@@ -381,7 +381,7 @@ This is designed so merge-related events line up with merge time rather than PR 
 - **`review_helper.py`** — changes requested, empty approvals, and LLM-based constructiveness labeling per (PR, reviewer).
 - **`llm_prompts.py`** — LLM prompt + client aliasing for constructiveness; also PR description clarity heuristic.
 - **`helpers_pr.py`** — shared utilities: safe event appending, file discovery, bot filtering wrappers, and log PR detection.
-- `process_model/clean.py` — converts `pr_labels_{team}.csv` → `CLEAN_pr_labels_{team}.csv` (called automatically).
+- `src/utils/clean.py` — converts `pr_labels_{team}.csv` → `CLEAN_pr_labels_{team}.csv` (called automatically).
 
 ---
 
