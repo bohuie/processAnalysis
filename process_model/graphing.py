@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 from graphviz import Digraph
+import argparse
 from dotenv import load_dotenv
 
 # ============================================================
@@ -36,20 +37,6 @@ FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")  # default: "branching"
 # ============================================================
 
 # ============================================================
-# CONFIGURATION - Visuals & Readability
-# ============================================================
-# Orientation: "horizontal" (default, rankdir=LR) or "vertical" (rankdir=TB)
-GRAPH_ORIENTATION = os.getenv("GRAPH_ORIENTATION", "horizontal")
-
-# Size: Graphviz size string, e.g. "8,5". If unset, defaults depend on orientation.
-GRAPH_SIZE = os.getenv("GRAPH_SIZE")
-
-# Pruning: Don't draw edges with probability < MIN_EDGE_PROB (float)
-# NOTE: This only affects the visual PNG output. It does NOT remove edges from the underlying data or clustering.
-try:
-    MIN_EDGE_PROB = float(os.getenv("MIN_EDGE_PROB", "0.0"))
-except ValueError:
-    MIN_EDGE_PROB = 0.0
 
 # ============================================================
 
@@ -161,7 +148,7 @@ def load_sessions_count_map(sess_fp: str) -> dict:
 # ---------- Rendering (same styling as old script) ----------
 def build_markov_graph(user_label, edges_df, event_freq, output_path,
                        title_suffix="", normalize_probs=True,
-                       teams_in_cluster=None):
+                       teams_in_cluster=None, config=None):
     edges_df = edges_df.copy()
     edges_df = edges_df[edges_df["count"] > 0]
     if edges_df.empty:
@@ -186,15 +173,18 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
     dot = Digraph(comment=f"Markov — {user_label}", format="png")
     
     # Defaults tailored for orientation
-    if GRAPH_ORIENTATION == "vertical":
+    # Defaults tailored for orientation
+    orientation = config.orientation if config else "horizontal"
+    
+    if orientation == "vertical":
         rankdir = "TB"
-        graph_size = GRAPH_SIZE if GRAPH_SIZE else "10,14"
+        graph_size = config.size if (config and config.size) else "10,14"
         nodesep, ranksep = "0.35", "0.55"
         font_node, font_edge, font_title = "14", "12", "16"
     else:
         # Default / Horizontal
         rankdir = "LR"
-        graph_size = GRAPH_SIZE if GRAPH_SIZE else "12,6"
+        graph_size = config.size if (config and config.size) else "12,6"
         nodesep, ranksep = "0.3", "0.3"
         font_node, font_edge, font_title = "12", "10", "14"
 
@@ -239,7 +229,8 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
         p = data.get("prob", 0.0)
         
         # Pruning check (visual only)
-        if p < MIN_EDGE_PROB:
+        min_prob = config.min_edge_prob if config else 0.0
+        if p < min_prob:
             continue
 
         color = "#0D47A1" if p > 0.4 else "#1565C0" if p > 0.2 else "#64B5F6"
@@ -262,7 +253,7 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
 
 
 # ---------- Team graphs ----------
-def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict):
+def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict, config=None):
     teams = sorted(set(overall_df["team_number"]).union(set(avg_df["team_number"])),
                    key=lambda x: int(x) if str(x).isdigit() else 999999)
 
@@ -284,6 +275,7 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             event_freq=event_freq,
             output_path=os.path.join(out_overall_dir, f"team{team_str}_overall.png"),
             title_suffix=f"Overall • {CATEGORY_LABEL}",
+            config=config,
         )
 
         # Avg session (START/END expected)
@@ -294,6 +286,7 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             event_freq=event_freq,
             output_path=os.path.join(out_avg_dir, f"team{team_str}_avg_session.png"),
             title_suffix=f"Avg Session • {CATEGORY_LABEL}",
+            config=config,
         )
 
 
@@ -335,7 +328,7 @@ def _aggregate_cluster_event_freq(freq_map: dict, teams: list[str]) -> dict:
     return out
 
 
-def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: dict):
+def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: dict, config=None):
     if not os.path.exists(IN_CLUSTER_FP):
         print(f"[INFO] No cluster CSV found at {IN_CLUSTER_FP} — skipping cluster graphs.")
         return
@@ -370,11 +363,22 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
             output_path=os.path.join(cdir, "cluster_avg_session.png"),
             title_suffix=f"Z-filtered Avg Session • {CATEGORY_LABEL}",
             teams_in_cluster=teams,
+            config=config,
         )
 
 
 
 def main():
+    parser = argparse.ArgumentParser(description="Generate Markov graphs from process model data.")
+    parser.add_argument("--orientation", choices=["horizontal", "vertical"], default="horizontal",
+                        help="Graph layout orientation (default: horizontal)")
+    parser.add_argument("--size", type=str, default=None,
+                        help="Graphviz size string (e.g. '8,5')")
+    parser.add_argument("--min-edge-prob", type=float, default=0.0,
+                        help="Minimum edge probability to draw (visual pruning), default: 0.0")
+    
+    args = parser.parse_args()
+    
     print(f"\n[INFO] Looking for input files in: {PR_OUT_DIR}")
     
     for fp in [IN_OVERALL_FP, IN_AVG_FP]:
@@ -421,8 +425,8 @@ def main():
     freq_map = load_event_freq_map(IN_FREQ_FP)
     sess_count = load_sessions_count_map(IN_SESS_FP)
 
-    render_team_graphs(overall_df, avg_df, freq_map)
-    render_cluster_graphs(zfilt_df, freq_map, sess_count)
+    render_team_graphs(overall_df, avg_df, freq_map, config=args)
+    render_cluster_graphs(zfilt_df, freq_map, sess_count, config=args)
 
 
     print(f"\n[✅ DONE] Graphs written under: {PR_OUT_DIR}")

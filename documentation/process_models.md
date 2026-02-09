@@ -263,13 +263,13 @@ Required:
 
 If any of these files are missing, the script degrades gracefully and skips the corresponding enhancements.
 
-### Configuration (Environment Variables)
+### Configuration (Command Line Arguments)
 
-| Variable            | Default        | Description                                                                                                                |
-| :------------------ | :------------- | :------------------------------------------------------------------------------------------------------------------------- |
-| `GRAPH_ORIENTATION` | `horizontal`   | `vertical` for Top-to-Bottom, `horizontal` for Left-to-Right.                                                              |
-| `GRAPH_SIZE`        | `12,6` (horiz) | Custom Graphviz size string (e.g., `"8,5"`).                                                                               |
-| MIN_EDGE_PROB       | 0.0            | Hides edges in the **visual** PNG output below this probability. Does **not** affect clustering or underlying data models. |
+| Flag              | Default        | Description                                                                                                                |
+| :---------------- | :------------- | :------------------------------------------------------------------------------------------------------------------------- |
+| `--orientation`   | `horizontal`   | `vertical` for Top-to-Bottom, `horizontal` for Left-to-Right.                                                              |
+| `--size`          | `12,6` (horiz) | Custom Graphviz size string (e.g., `"8,5"`).                                                                               |
+| `--min-edge-prob` | `0.0`          | Hides edges in the **visual** PNG output below this probability. Does **not** affect clustering or underlying data models. |
 
 ### Team graph outputs
 
