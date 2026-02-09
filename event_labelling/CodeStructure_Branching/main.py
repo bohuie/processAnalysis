@@ -40,7 +40,7 @@ from .label_feature_size import label_feature_size
 from .label_refactor_size import label_refactor_size
 from .label_repo_status import label_repo_status
 from .label_pr_status import label_pr_status
-from process_model.clean import create_clean_branching_label_csv
+from src.utils.clean import create_clean_branching_label_csv
 
 # === SETUP ============================================================
 MODEL_NAME = "llama3.2:3b"
