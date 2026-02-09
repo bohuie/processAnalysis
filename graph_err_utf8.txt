@@ -1,0 +1,49 @@
+﻿============================= test session starts =============================
+platform win32 -- Python 3.14.0, pytest-9.0.2, pluggy-1.6.0
+rootdir: C:\Users\D2r3v\processAnalysis
+plugins: anyio-4.12.1
+collected 4 items
+
+test\process_model\test_graphing.py ...F                                 [100%]
+
+================================== FAILURES ===================================
+____________________ TestGraphing.test_build_markov_graph _____________________
+
+self = <test_graphing.TestGraphing object at 0x0000015E8DD5DA70>
+mock_digraph = <MagicMock name='Digraph' id='1505571118384'>
+
+    @patch("process_model.graphing.Digraph")
+    def test_build_markov_graph(self, mock_digraph):
+        # Verify it makes calls to graphviz
+        mock_dot = MagicMock()
+        mock_digraph.return_value = mock_dot
+    
+        edges = pd.DataFrame([
+            {"from": "A", "to": "B", "count": 10},
+            {"from": "B", "to": "C", "count": 10}
+        ])
+    
+>       build_markov_graph(
+            user_label="Test Graph",
+            edges_df=edges,
+            event_freq={},
+            output_path="dummy_path.png"
+        )
+
+test\process_model\test_graphing.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+process_model\graphing.py:189: in build_markov_graph
+    ensure_dir(os.path.dirname(output_path))
+process_model\graphing.py:65: in ensure_dir
+    os.makedirs(path, exist_ok=True)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+name = '', mode = 511, exist_ok = True
+
+>   ???
+E   FileNotFoundError: [WinError 3] The system cannot find the path specified: ''
+
+<frozen os>:236: FileNotFoundError
+=========================== short test summary info ===========================
+FAILED test/process_model/test_graphing.py::TestGraphing::test_build_markov_graph
+========================= 1 failed, 3 passed in 0.90s =========================
