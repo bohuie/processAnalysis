@@ -152,6 +152,7 @@ If `ANONYMIZE=True`, applies [src/utils/anonymize_columns.py](../src/utils/anony
 
 Runs labeling modules in [event_labelling/CodeStructure_Branching/](../event_labelling/CodeStructure_Branching/) (separate scripts for each label type):
 
+<<<<<<< HEAD
 | Module                                                                                                  | Function                             | Output Column                 | Logic                                                                                                                                                                       |
 | ------------------------------------------------------------------------------------------------------- | ------------------------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [label_branch_names.py](../event_labelling/CodeStructure_Branching/label_branch_names.py)               | `label_branch_names()`               | `llm_output`, `llm_reasoning` | **LLM-based**: sends branch name + PR metadata to local Ollama model; parses confidence/prediction/reasoning from response. One row per unique branch name.                 |
@@ -162,6 +163,18 @@ Runs labeling modules in [event_labelling/CodeStructure_Branching/](../event_lab
 | [label_pr_status.py](../event_labelling/CodeStructure_Branching/label_pr_status.py)                     | `label_pr_status()`                  | `main_label`                  | Checks `state` and `merged_at` columns: "still_open" (state='open'), "merged" (state='closed' + merged_at set), or "closed" (state='closed' without merge). One row per PR. |
 | [src/utils/label_merge.py](../src/utils/label_merge.py)                                                 | `label_merge_state()`                | `main_label`                  | Categorizes merge method. One row per merged PR.                                                                                                                            |
 | `process_model/clean.py`                                                                                | `create_clean_branching_label_csv()` | N/A (utility)                 | **Automatic post-processing**: Filters to PR-level events and creates clean CSVs. Called automatically by `main.py`.                                                        |
+=======
+| Module | Function | Output Column | Logic |
+|--------|----------|----------------|-------|
+| [label_branch_names.py](../event_labelling/CodeStructure_Branching/label_branch_names.py) | `label_branch_names()` | `llm_output`, `llm_reasoning` | **LLM-based**: sends branch name + PR metadata to local Ollama model; parses confidence/prediction/reasoning from response. One row per unique branch name. |
+| [label_features_per_branch.py](../event_labelling/CodeStructure_Branching/label_features_per_branch.py) | `label_features_per_branch()` | `main_label` | Counts how many PRs used each branch. Labels: "one Features Per Branch" (1 PR) or "multiple Features Per Branch" (2+ PRs). One row per PR. |
+| [label_feature_size.py](../event_labelling/CodeStructure_Branching/label_feature_size.py) | `label_feature_size()` | `main_label` | Per-file: identifies pure-addition files (additions>0, deletions=0). Thresholds: <50 lines = "Small Feature Size", ≥50 lines = "Large Feature Size". One row per file. |
+| [label_refactor_size.py](../event_labelling/CodeStructure_Branching/label_refactor_size.py) | `label_refactor_size()` | `main_label` | Per-file: identifies any file with deletions (refactors). Thresholds: total modified lines <50 = "Small Refactor Size", ≥50 = "Large Refactor Size". One row per file. |
+| [label_repo_status.py](../event_labelling/CodeStructure_Branching/label_repo_status.py) | `label_repo_status()` | `main_label` | Checks `was_up_to_date_at_merge`: "up-to-date" (boolean true) or "outdated" (boolean false). One row per PR. |
+| [label_pr_status.py](../event_labelling/CodeStructure_Branching/label_pr_status.py) | `label_pr_status()` | `main_label` | Checks `state` and `merged_at` columns: "still_open" (state='open'), "merged" (state='closed' + merged_at set), or "closed" (state='closed' without merge). One row per PR. |
+| [src/utils/label_merge.py](../src/utils/label_merge.py) | `label_merge_state()` | `main_label` | Categorizes merge method. One row per merged PR. |
+| [clean_labels.py](../event_labelling/CodeStructure_Branching/clean_labels.py) (optional) | `create_clean_branching_label_csv()` | N/A (utility) | Post-processing script. Creates clean CSVs with only PR-level events, filtering out per-file Feature/Refactor Size details. Useful for reducing output size. Run manually if needed. |
+>>>>>>> dev
 
 **LLM-based branch naming:** The script sends a structured prompt to the Ollama model for each branch, asking:
 
@@ -191,11 +204,19 @@ CONFIDENCE: (0-100)
 
 Two CSV files per team in `data/graph_labels/`:
 
+<<<<<<< HEAD
 | File                                              | Rows                                 | Purpose                                                                                                                                                    |
 | ------------------------------------------------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `{team}_labels_branching_and_structure.csv`       | Multiple per PR (one per label type) | Combined event labels concatenating all label types. **Important**: This includes per-file Feature Size and Refactor Size labels, so row count >> PR count |
 | `{team}_llm_branch_name_reasoning.csv`            | One per unique branch name           | Detailed LLM reasoning for branch-name assessments (separate output from main labels file)                                                                 |
 | `clean/{team}_labels_branching_and_structure.csv` | One per PR (max 7 rows/PR)           | Clean version with only PR-level labels, generated automatically                                                                                           |
+=======
+| File | Rows | Purpose |
+|------|------|---------|
+| `{team}_labels_branching_and_structure.csv` | Multiple per PR (one per label type) | Combined event labels concatenating all label types. **Important**: This includes per-file Feature Size and Refactor Size labels, so row count >> PR count |
+| `{team}_llm_branch_name_reasoning.csv` | One per unique branch name | Detailed LLM reasoning for branch-name assessments (separate output from main labels file) |
+| `clean/{team}_labels_branching_and_structure.csv` (optional) | One per PR (max 7 rows/PR) | Clean version with only PR-level labels, generated by `clean_labels.py` if run |
+>>>>>>> dev
 
 ### Output Columns in Combined Labels File
 
@@ -210,7 +231,11 @@ The main combined labels CSV contains:
 - `llm_output` — explanation (LLM-based for branch names, rule-based for others)
 - `llm_timestamp` — reproducible timestamp for the run
 
+<<<<<<< HEAD
 **Key insight:** Because Feature Size and Refactor Size labels generate **one row per file**, the combined labels file has multiple rows per PR. Example: a 5-file PR with 3 feature files and 2 refactor files generates 5 size labels + labels for other categories. The system automatically creates a cleaned version for PR-level analysis.
+=======
+**Key insight:** Because Feature Size and Refactor Size labels generate **one row per file**, the combined labels file has multiple rows per PR. Example: a 5-file PR with 3 feature files and 2 refactor files generates 5 size labels + labels for other categories. Use `clean_labels.py` to create PR-level-only output if needed.
+>>>>>>> dev
 
 Example columns in the combined labels file:
 
@@ -235,6 +260,7 @@ project root and applied case-insensitively across selected columns (`pr_author`
 ## Common Debugging Scenarios
 
 - `MODEL_NAME` in the orchestration code defaults to `llama3.2:3b`; LLM requests go through
+<<<<<<< HEAD
   | Symptom | Likely Cause | Solution |
   |---------|------------|----------|
   | "No team folders found" | Running from wrong directory | Run `python event_labelling/CodeStructure_Branching/main.py` from project root |
@@ -246,6 +272,18 @@ project root and applied case-insensitively across selected columns (`pr_author`
   | Per-file size labels explosion (too many rows) | Expected behavior for large PRs | Use the automatically generated clean version for PR-level-only analysis; filter to specific label types in downstream analysis |
   `src.utils.ollama_offline.connect_ollama_offline` by default.
 
+=======
+| Symptom | Likely Cause | Solution |
+|---------|------------|----------|
+| "No team folders found" | Running from wrong directory | Run `python event_labelling/CodeStructure_Branching/main.py` from project root |
+| Missing required CSV columns error | Input CSVs from `scripts/app.py` don't match expected schema | Check [scripts/app.py](../scripts/app.py) output, verify column names match PR, commits, file changes CSVs |
+| LLM responses stuck or slow | Ollama daemon not running or model not loaded | `ollama serve` in separate terminal; verify with `curl http://localhost:11434/api/tags` |
+| Very few or zero "small" size labels | Thresholds miscalibrated for codebase | Feature <50 lines, Refactor <50 total lines modified. Check sample files to recalibrate if needed |
+| Timestamps missing in output | PR data lacks `created_at` or `merged_at` columns | Verify input CSVs have these columns; may need to re-extract from GitHub |
+| Anonymization not applied | `confidential/anonymized_usernames.json` missing or ANONYMIZE=False | Verify JSON file exists if ANONYMIZE=True; regenerate if needed |
+| Per-file size labels explosion (too many rows) | Expected behavior for large PRs | Use `clean_labels.py` to create PR-level-only output; filter to specific label types in downstream analysis |
+   `src.utils.ollama_offline.connect_ollama_offline` by default.
+>>>>>>> dev
 ## File Structure & Roles
 
 **Main orchestrator:**
@@ -269,10 +307,15 @@ project root and applied case-insensitively across selected columns (`pr_author`
 - `ollama_offline.py` — LLM interface
 - `label_merge.py` — categorizes merge method
 
+<<<<<<< HEAD
 **Post-processing:**
 
 - `process_model/clean.py` — Utility for creating clean PR-level event streams. Automatically called by `main.py`.
 
+=======
+**Post-processing (optional):**
+- `clean_labels.py` (285 lines) — filters to PR-level events, creates cleaner output. Run separately if needed: `python event_labelling/CodeStructure_Branching/clean_labels.py`
+>>>>>>> dev
 ## LLM behavior and parsing
 
 Notes:
