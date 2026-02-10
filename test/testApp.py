@@ -11,7 +11,7 @@ import shutil
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the function to test
-from scripts.app import extract_repository_data
+from app import extract_repository_data
 
 
 class TestExtractRepositoryData:
@@ -462,7 +462,7 @@ class TestEnrichSinglePr:
     """Unit tests for enrich_single_pr helper."""
 
     def test_enrich_single_pr_sets_flags_and_counts(self):
-        from scripts.app import enrich_single_pr
+        from app import enrich_single_pr
 
         class DummyExtractor:
             def extract_pull_request_by_id(self, pr_id):
