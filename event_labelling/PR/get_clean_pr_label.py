@@ -2,6 +2,7 @@ from __future__ import annotations
 import os
 import ast
 import pandas as pd
+from typing import Optional
 
 
 MERGE_EVENTS = {"reviewed_merge", "self_merge"}
@@ -35,7 +36,7 @@ def _parse_event_cell(ev) -> list[str]:
     return []
 
 
-def _pick_timestamp_row(row: pd.Series, events: list[str]) -> str | None:
+def _pick_timestamp_row(row: pd.Series, events: list[str]) -> Optional[str]:
     """
     Timestamp rules:
     - default: created_at
@@ -67,7 +68,7 @@ def _pick_timestamp_row(row: pd.Series, events: list[str]) -> str | None:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def create_clean_pr_label_csv(input_csv_path: str, output_csv_path: str | None = None) -> str:
+def create_clean_pr_label_csv(input_csv_path: str, output_csv_path: Optional[str] = None) -> str:
     """
     Reads pr_labels_{team}.csv and writes CLEAN_pr_labels_{team}.csv containing:
       pr_id, timestamp, event
