@@ -1,14 +1,9 @@
 import os
-from pathlib import Path
 import pandas as pd
 import numpy as np
-from dotenv import load_dotenv
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# Load .env
-load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Configuration for both datasets
 CONFIGS = {

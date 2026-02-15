@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+import pandas as pd
 from dotenv import load_dotenv
 
 # Load .env if it exists
@@ -12,6 +13,22 @@ from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
 from process_model.clustering import main as run_clustering
 from process_model.graphing import main as run_graphing
+
+
+def _count_teams_in_outputs(output_dir: str) -> int:
+    sessions_fp = os.path.join(output_dir, "team_transition_sessions_count.csv")
+    if not os.path.exists(sessions_fp):
+        return 0
+    try:
+        df = pd.read_csv(sessions_fp, low_memory=False)
+        if "team_number" in df.columns:
+            return df["team_number"].nunique()
+        if "team_name" in df.columns:
+            return df["team_name"].nunique()
+        return len(df)
+    except Exception:
+        return 0
+
 
 # Continue with labeling steps
 print("\nStep 2: Event Labelling & PR Analysis")
@@ -31,60 +48,46 @@ except Exception as e:
 
 # Run process model analysis (BOTH datasets automatically)
 print("\n📊 Step 3: Process Model Analysis (Both Datasets)")
-print("   Processing for branching AND pr_labels automatically...\n")
+print("   Processing for branching AND pr automatically...\n")
 
+transition_ok = False
 try:
     print("   • Computing transition edges...")
     run_transition_edges()
     print("   ✓ Finished transition edges\n")
+    transition_ok = True
 except Exception as e:
     print(f"   ⚠️  Transition edges error: {e}\n")
 
-try:
-    print("   • Computing z-scores...")
-    run_zscore()
-    print("   ✓ Finished z-scores\n")
-except Exception as e:
-    print(f"   ⚠️  Z-score error: {e}\n")
+if transition_ok:
+    branching_count = _count_teams_in_outputs(os.path.join("data", "outputs", "branching"))
+    pr_count = _count_teams_in_outputs(os.path.join("data", "outputs", "pr"))
+    if min(branching_count, pr_count) >= 3:
+        try:
+            print("   • Computing z-scores...")
+            run_zscore()
+            print("   ✓ Finished z-scores\n")
+        except Exception as e:
+            print(f"   ⚠️  Z-score error: {e}\n")
 
-try:
-    print("   • Computing clusters...")
-    run_clustering()
-    print("   ✓ Finished clustering\n")
-except Exception as e:
-    print(f"   ⚠️  Clustering error: {e}\n")
-
-# Run process model analysis (BOTH datasets automatically)
-print("\nStep 3: Process Model Analysis (Both Datasets)")
-print("   Processing for branching AND pr_labels automatically...\n")
-
-try:
-    print("   • Computing transition edges...")
-    run_transition_edges()
-    print("   [OK] Finished transition edges\n")
-except Exception as e:
-    print(f"   [ERROR] Transition edges error: {e}\n")
-
-try:
-    print("   • Computing z-scores...")
-    run_zscore()
-    print("   [OK] Finished z-scores\n")
-except Exception as e:
-    print(f"   [ERROR] Z-score error: {e}\n")
-
-try:
-    print("   • Computing clusters...")
-    run_clustering()
-    print("   [OK] Finished clustering\n")
-except Exception as e:
-    print(f"   [ERROR] Clustering error: {e}\n")
+        try:
+            print("   • Computing clusters...")
+            run_clustering()
+            print("   ✓ Finished clustering\n")
+        except Exception as e:
+            print(f"   ⚠️  Clustering error: {e}\n")
+    else:
+        print(
+            "   [SKIP] Skipping z-scores and clustering (need >= 3 teams per dataset). "
+            f"branching={branching_count}, pr={pr_count}\n"
+        )
 
 try:
     print("   • Generating graphs...")
     run_graphing()
-    print("   [OK] Finished graph generation\n")
+    print("   ✓ Finished graph generation\n")
 except Exception as e:
-    print(f"   [ERROR] Graph generation error: {e}\n")
+    print(f"   ⚠️  Graph generation error: {e}\n")
 
 print("=" * 70)
 print("[COMPLETE] Pipeline Complete!")

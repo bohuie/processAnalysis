@@ -2,14 +2,9 @@ import os, re, glob
 import pandas as pd
 import numpy as np
 import ast
-from pathlib import Path
-from dotenv import load_dotenv
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# Load .env (for other config if needed)
-load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Configuration for both datasets
 CONFIGS = {
@@ -21,7 +16,7 @@ CONFIGS = {
         "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv",
         "output_folder": os.path.join(ROOT, "data", "outputs", "branching")
     },
-    "pr_labels": {
+    "pr": {
         "data_folder": os.path.join(ROOT, "data", "csv"),
         "prefix": "CLEAN_pr_labels_",
         "pattern": "year-long-project-team-*.csv",
@@ -56,12 +51,12 @@ def normalize_event_field(event):
       - if event looks like a list string: "['a','b']" -> ['a','b']
       - otherwise: 'a' -> ['a']
     """
-    if pd.isna(event):
-        return []
-
     # if it's already a list (rare, but safe)
     if isinstance(event, list):
         return [str(x).strip() for x in event if str(x).strip()]
+
+    if pd.isna(event):
+        return []
 
     s = str(event).strip()
     if not s:
