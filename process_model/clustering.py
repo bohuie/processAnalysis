@@ -133,6 +133,10 @@ def main():
         filtered_edges_out_fp = os.path.join(
             data_dir, f"team_transition_edges_avg_session_zfiltered_{cluster_suffix}.csv"
         )
+        matrix_out_fp = os.path.join(data_dir, f"team_transition_matrix_{cluster_suffix}.csv")
+        filtered_edges_out_fp = os.path.join(
+            data_dir, f"team_transition_edges_avg_session_zfiltered_{cluster_suffix}.csv"
+        )
         
         if not os.path.exists(in_fp):
             print(f"[SKIP] Missing input: {in_fp}")
@@ -144,8 +148,15 @@ def main():
         
         print("[INFO] Building team matrix...")
         teams, pairs, X, df_filt = build_team_matrix(df, z_threshold=Z_THRESHOLD)
+        teams, pairs, X, df_filt = build_team_matrix(df, z_threshold=Z_THRESHOLD)
 
         nonzero_mask = (X.sum(axis=1) > 0)
+        kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
+        X = X[nonzero_mask]
+        
+        dropped = int((~nonzero_mask).sum())
+        if dropped:
+            print(f"[INFO] Dropped {dropped} teams with all-zero vectors at |z| ≥ {Z_THRESHOLD}")
         kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
         X = X[nonzero_mask]
         
@@ -157,7 +168,16 @@ def main():
         df_filt = df_filt.copy()
         df_filt["team_number"] = df_filt["team_number"].astype(str)
         df_filt_kept = df_filt[df_filt["team_number"].isin(set(map(str, kept_teams)))].copy()
+        # export z-filtered edges for kept teams
+        df_filt = df_filt.copy()
+        df_filt["team_number"] = df_filt["team_number"].astype(str)
+        df_filt_kept = df_filt[df_filt["team_number"].isin(set(map(str, kept_teams)))].copy()
 
+        cols_first = ["team_number", "from", "to", "count", "z_score"]
+        remaining = [c for c in df_filt_kept.columns if c not in cols_first]
+        df_filt_kept = df_filt_kept[cols_first + remaining]
+        df_filt_kept.to_csv(filtered_edges_out_fp, index=False)
+        print(f"[OK] Wrote z-filtered edges: {filtered_edges_out_fp}")
         cols_first = ["team_number", "from", "to", "count", "z_score"]
         remaining = [c for c in df_filt_kept.columns if c not in cols_first]
         df_filt_kept = df_filt_kept[cols_first + remaining]
@@ -170,7 +190,18 @@ def main():
         matrix_df.index.name = "team_number"
         matrix_df.to_csv(matrix_out_fp)
         print(f"[OK] Wrote transition matrix: {matrix_out_fp}")
+        # export transition matrix
+        col_names = [f"{a}->{b}" for (a, b) in pairs]
+        matrix_df = pd.DataFrame(X, index=kept_teams, columns=col_names)
+        matrix_df.index.name = "team_number"
+        matrix_df.to_csv(matrix_out_fp)
+        print(f"[OK] Wrote transition matrix: {matrix_out_fp}")
 
+        if X.shape[0] < 2:
+            out = pd.DataFrame({"team_number": kept_teams, "cluster_id": [0] * len(kept_teams)})
+            out.to_csv(out_fp, index=False)
+            print(f"[OK] Wrote: {out_fp} (not enough teams to cluster)")
+            continue
         if X.shape[0] < 2:
             out = pd.DataFrame({"team_number": kept_teams, "cluster_id": [0] * len(kept_teams)})
             out.to_csv(out_fp, index=False)
