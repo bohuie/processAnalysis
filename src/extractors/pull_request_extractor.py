@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from dotenv import load_dotenv
 
-# Eextracts full file contents
+# Extracts full file contents
 import base64
 from urllib.parse import quote
 

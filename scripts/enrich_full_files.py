@@ -30,7 +30,7 @@ def enrich_full_files_for_repo(
     """Build a CSV of full file contents at each PR head commit for files changed in those PRs."""
 
     exts = allowed_ext or {
-        ".py", ".java", ".js", ".ts", ".jsx", ".tsx", ".rb", ".go",
+        ".py", ".java", ".js", ".ts", ".jsx", ".tsx", ".rb", ".go", ".kts", ".cc",
         ".cpp", ".c", ".h", ".hpp", ".cs", ".kt", ".rs", ".php", ".swift", ".sh"
     }
     
