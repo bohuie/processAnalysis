@@ -306,3 +306,27 @@ python test/testApp.py
 ```
 
 ---
+
+## 🗂️ Full-File Enrichment
+Retrieve the full file contents of modified files at each PR for code violation detection.
+
+```bash
+python scripts/enrich_full_files.py
+```
+⚠️ Before running, open [scripts/enrich_full_files.py](scripts/enrich_full_files.py) and set:
+- `REPO_OWNER` (string)
+- `REPO_NAMES` (string)
+
+---
+
+## 💯 Magic Number Detection
+This project includes a Magic Number detection.
+
+### How to Run
+```bash
+python test/test_detect_magic_numbers.py
+```
+⚠️ Before running, open [test/test_detect_magic_numbers.py](test/test_detect_magic_numbers.py) and set:
+- `REPO_NAME` (string)
+
+---
