@@ -1,16 +1,12 @@
 import os
-from pathlib import Path
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from dotenv import load_dotenv
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# Load .env
-load_dotenv(dotenv_path=Path(__file__).parent.parent / '.env')
 
 # Configuration for both datasets
 CONFIGS = {
@@ -84,6 +80,21 @@ def compute_elbow_scores(X: np.ndarray, k_min=2, k_max=10):
         elbow_data["inertia"].append(km.inertia_)
     
     return elbow_data
+
+
+def plot_elbow_scores(elbow_scores: dict, output_path: str, title: str) -> None:
+    if not elbow_scores or not elbow_scores.get("k"):
+        return
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(elbow_scores["k"], elbow_scores["inertia"], marker="o")
+    plt.title(title)
+    plt.xlabel("Number of clusters (k)")
+    plt.ylabel("Inertia")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
 
 
 def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
@@ -185,14 +196,22 @@ def main():
         out.to_csv(out_fp, index=False)
         print(f"[OK] Wrote: {out_fp}")
         
-        # Save elbow scores
+        # Save elbow scores + plot
         if elbow_scores and elbow_scores.get("k"):
             elbow_fp = os.path.join(data_dir, f"elbow_scores_{cluster_suffix}.csv")
             elbow_df = pd.DataFrame(elbow_scores)
             elbow_df.to_csv(elbow_fp, index=False)
             print(f"[OK] Wrote: {elbow_fp}")
+
+            elbow_png = os.path.join(data_dir, f"elbow_plot_{cluster_suffix}.png")
+            plot_elbow_scores(
+                elbow_scores,
+                elbow_png,
+                title=f"Elbow Plot ({cluster_suffix})"
+            )
+            print(f"[OK] Wrote: {elbow_png}")
         else:
-            print("[INFO] Skipping elbow CSV (no valid k range).")
+            print("[INFO] Skipping elbow CSV/plot (no valid k range).")
 
 
 if __name__ == "__main__":
