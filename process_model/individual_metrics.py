@@ -1,300 +1,334 @@
 """
 individual_metrics.py
 
-Generates per-developer metrics from cleaned PR and review-comment logs.
-Metrics are anonymized by design and intended to characterize how work and
-review activity are distributed within teams, not to evaluate individuals.
+Generates per-developer label-based metrics from event-label CSVs.
 
-Notes:
-- Review activity is inferred from review comments only; silent approvals
-  are not captured.
-- Metrics are computed from CLEAN_ CSVs and may differ slightly from
-  GitHub UI counts due to filtering and missing timestamps.
+Each PR's events (labels like 'Meaningful Branch Name', 'self_merge', etc.)
+are joined to the PR author via CLEAN_*_all_pull_requests.csv, then
+aggregated per developer.
+
+Metrics mirror the fields used in graphing.py (event frequencies and
+Markov transition counts/probabilities) but scoped to individual developers
+rather than the whole team.
+
+Controlled by env vars (same as transition_edges.py / graphing.py):
+  FOLDER_SOURCE = "branching" | "pr"
+  FILE_SOURCE   = "branching" | "pr"   (selects label CSV source)
 """
+
 import os
+import re
 import glob
+import json
+import ast
 import pandas as pd
 import numpy as np
-import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
-FOLDER_SOURCE = os.getenv("FOLDER_SOURCE", "pr")
+# ── Paths ──────────────────────────────────────────────────────────────────
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+ROOT        = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-def normalize_username(user_series):
-    """Normalize username to lowercase string, handling mixed types."""
-    return user_series.fillna("").astype(str).str.lower().str.strip()
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
-def safe_div(n, d):
-    return n / d if d > 0 else 0.0
+FOLDER_SOURCE = os.getenv("FOLDER_SOURCE", "branching")   # output subdir
+FILE_SOURCE   = os.getenv("FILE_SOURCE",   "branching")   # label CSV source
 
-def load_team_data(team_dir):
+# ── Label-CSV configs (mirrors transition_edges.py) ────────────────────────
+CONFIGS = {
+    "branching": {
+        "data_folder": os.path.join(ROOT, "data", "graph_labels", "clean"),
+        "prefix":      "CLEAN_year-long-project-team-",
+        "pattern":     "*_labels_branching_and_structure.csv",
+        "regex":       re.compile(
+            r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
+            re.IGNORECASE,
+        ),
+    },
+    "pr": {
+        "data_folder": os.path.join(ROOT, "data", "csv"),
+        "prefix":      "CLEAN_pr_labels_",
+        "pattern":     "year-long-project-team-*.csv",
+        "regex":       re.compile(
+            r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$",
+            re.IGNORECASE,
+        ),
+    },
+}
+
+OUTPUT_DIR = os.path.join(ROOT, "data", "outputs", FOLDER_SOURCE)
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+def normalize_username(series: pd.Series) -> pd.Series:
+    return series.fillna("").astype(str).str.lower().str.strip()
+
+
+def normalize_event_field(event) -> list[str]:
+    """Parse a single event cell into a list of label strings.
+    Handles plain strings and stringified Python lists, e.g. \"['a','b']\".
+    Mirrors transition_edges.py behaviour exactly.
     """
-    Load PR and review data for a specific team directory.
-    Returns tuple of (pr_df, review_df) or (None, None) if files missing.
-    """
-    team_name = os.path.basename(team_dir)
-    
-    pr_file = os.path.join(team_dir, f"CLEAN_{team_name}_all_pull_requests.csv")
-    review_file = os.path.join(team_dir, f"CLEAN_{team_name}_review-comments.csv")
-    
-    if not os.path.exists(pr_file):
-        print(f"[WARN] PR file not found for {team_name}: {pr_file}")
-        return None, None
-        
-    if not os.path.exists(review_file):
-        print(f"[WARN] Review file not found for {team_name}: {review_file}. Continuing with empty review data.")
-        review_df = pd.DataFrame(columns=['pr_id', 'author', 'created_at', 'state'])
-    else:
+    if isinstance(event, list):
+        return [str(x).strip() for x in event if str(x).strip()]
+    if pd.isna(event):
+        return []
+    s = str(event).strip()
+    if not s:
+        return []
+    if s.startswith("[") and s.endswith("]"):
         try:
-            review_df = pd.read_csv(review_file)
-        except Exception as e:
-             print(f"[ERROR] Failed to read review file {review_file}: {e}")
-             review_df = pd.DataFrame(columns=['pr_id', 'author', 'created_at', 'state'])
+            parsed = ast.literal_eval(s)
+            if isinstance(parsed, list):
+                return [str(x).strip() for x in parsed if str(x).strip()]
+            return [str(parsed).strip()]
+        except Exception:
+            return [s]
+    return [s]
 
+
+def safe_rate(count: int, total: int) -> float:
+    return round(count / total, 4) if total > 0 else 0.0
+
+
+# ── Core per-team processing ─────────────────────────────────────────────────
+
+def load_label_csv(label_fp: str) -> pd.DataFrame:
+    """Load a label CSV and explode list-valued event cells to one row per label."""
+    df = pd.read_csv(label_fp, low_memory=False)
+    required = {"pr_id", "timestamp", "event"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"{label_fp} missing columns: {missing}")
+
+    df["pr_id"]    = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
+    df["timestamp"]= pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+    df["_row_idx"] = np.arange(len(df))
+
+    df["event_list"] = df["event"].apply(normalize_event_field)
+    df = df.explode("event_list", ignore_index=True)
+    df["event"] = df["event_list"].astype(str).str.strip()
+    df = df.dropna(subset=["pr_id", "timestamp"])
+    df = df[df["event"].ne("") & df["event"].ne("nan")]
+    df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
+    return df[["pr_id", "timestamp", "event"]]
+
+
+def load_pr_authors(team_dir: str, team_name: str) -> pd.DataFrame:
+    """Load pr_id → pr_author mapping from the CLEAN PR CSV."""
+    pr_file = os.path.join(team_dir, f"CLEAN_{team_name}_all_pull_requests.csv")
+    if not os.path.exists(pr_file):
+        print(f"[WARN] PR author file not found: {pr_file}")
+        return pd.DataFrame(columns=["pr_id", "pr_author"])
+    df = pd.read_csv(pr_file, usecols=["pr_id", "pr_author"], low_memory=False)
+    df["pr_id"]     = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
+    df["pr_author"] = normalize_username(df["pr_author"])
+    return df[["pr_id", "pr_author"]].drop_duplicates("pr_id")
+
+
+def compute_dev_metrics(dev_events: pd.DataFrame) -> dict:
+    """
+    Given all label-events for a single developer, return a flat dict of metrics.
+
+    dev_events columns: pr_id, timestamp, event
+    """
+    num_prs        = dev_events["pr_id"].nunique()
+    total_labels   = len(dev_events)
+    unique_labels  = dev_events["event"].nunique()
+
+    # ── Label frequency ──────────────────────────────────────────────────────
+    label_counts: dict[str, int] = dev_events["event"].value_counts().to_dict()
+    top_label = dev_events["event"].value_counts().idxmax() if total_labels > 0 else ""
+
+    # ── Per-label rates (count / num_prs, one row per PR counts once) ────────
+    # Use PR-level: does the PR have ≥1 occurrence of this label?
+    pr_labels = dev_events.groupby("pr_id")["event"].apply(set)
+
+    def pr_rate(label: str) -> float:
+        has = sum(1 for s in pr_labels if label in s)
+        return safe_rate(has, num_prs)
+
+    meaningful_branch_rate   = pr_rate("Meaningful Branch Name")
+    random_branch_rate       = pr_rate("Random Branch Name")
+    self_merge_rate          = pr_rate("self_merge")
+    reviewed_merge_rate      = pr_rate("reviewed_merge")
+    one_feature_rate         = pr_rate("one Features Per Branch")
+    up_to_date_rate          = pr_rate("up-to-date")
+    outdated_rate            = pr_rate("outdated")
+    still_open_rate          = pr_rate("still_open")
+    # PR-mode labels
+    pr_description_clear_rate      = pr_rate("pr_description_clear")
+    pr_description_unclear_rate    = pr_rate("pr_description_unclear")
+    constructive_review_rate       = pr_rate("constructive_additional_review")
+    approved_empty_review_rate     = pr_rate("approved_empty_review")
+    changes_requested_rate         = pr_rate("changes_requested")
+
+    # ── Transition stats (mirrors graphing.py edge computation) ─────────────
+    # Per PR: consecutive event pairs after sorting by timestamp
+    transition_counter: dict[tuple, int] = {}
+    first_events: list[str] = []
+    last_events:  list[str] = []
+    total_transitions = 0
+
+    for _, pr_grp in dev_events.groupby("pr_id"):
+        events = pr_grp["event"].tolist()
+        if not events:
+            continue
+        first_events.append(events[0])
+        last_events.append(events[-1])
+        for i in range(len(events) - 1):
+            a, b = events[i], events[i + 1]
+            transition_counter[(a, b)] = transition_counter.get((a, b), 0) + 1
+            total_transitions += 1
+
+    unique_transitions = len(transition_counter)
+    avg_transitions_per_pr = round(total_transitions / num_prs, 3) if num_prs > 0 else 0.0
+
+    # Top transition
+    top_transition      = ""
+    top_transition_prob = 0.0
+    if transition_counter:
+        top_pair  = max(transition_counter, key=transition_counter.get)
+        top_count = transition_counter[top_pair]
+        top_transition = f"{top_pair[0]} -> {top_pair[1]}"
+        # Probability: count / total outgoing from the "from" node (for this dev)
+        from_total = sum(
+            c for (a, _), c in transition_counter.items() if a == top_pair[0]
+        )
+        top_transition_prob = round(top_count / from_total, 4) if from_total > 0 else 0.0
+
+    most_common_first_event = (
+        pd.Series(first_events).value_counts().idxmax() if first_events else ""
+    )
+    most_common_last_event = (
+        pd.Series(last_events).value_counts().idxmax() if last_events else ""
+    )
+
+    return {
+        "num_prs":                      num_prs,
+        "total_labels":                 total_labels,
+        "unique_labels":                unique_labels,
+        "top_label":                    top_label,
+        "label_counts_json":            json.dumps(label_counts),
+        # ── Branching-mode rates ──
+        "meaningful_branch_rate":       meaningful_branch_rate,
+        "random_branch_rate":           random_branch_rate,
+        "one_feature_per_branch_rate":  one_feature_rate,
+        "self_merge_rate":              self_merge_rate,
+        "reviewed_merge_rate":          reviewed_merge_rate,
+        "up_to_date_rate":              up_to_date_rate,
+        "outdated_rate":                outdated_rate,
+        "still_open_rate":              still_open_rate,
+        # ── PR-mode rates ──
+        "pr_description_clear_rate":    pr_description_clear_rate,
+        "pr_description_unclear_rate":  pr_description_unclear_rate,
+        "constructive_review_rate":     constructive_review_rate,
+        "approved_empty_review_rate":   approved_empty_review_rate,
+        "changes_requested_rate":       changes_requested_rate,
+        # ── Transition / sequence stats ──
+        "total_transitions":            total_transitions,
+        "unique_transitions":           unique_transitions,
+        "avg_transitions_per_pr":       avg_transitions_per_pr,
+        "top_transition":               top_transition,
+        "top_transition_prob":          top_transition_prob,
+        "most_common_first_label":      most_common_first_event,
+        "most_common_last_label":       most_common_last_event,
+    }
+
+
+def process_team(label_fp: str, config: dict) -> pd.DataFrame:
+    """Process one team's label CSV and return a per-developer metrics DataFrame."""
+    base      = os.path.basename(label_fp)
+    m         = config["regex"].match(base)
+    team_name = m.group(1) if m else "unknown-team"
+    num_m     = re.search(r"team-(\d+)", team_name)
+    team_number = num_m.group(1) if num_m else "unknown"
+
+    # Load event labels
     try:
-        pr_df = pd.read_csv(pr_file)
+        label_df = load_label_csv(label_fp)
     except Exception as e:
-        print(f"[ERROR] Failed to read PR file {pr_file}: {e}")
-        return None, None
-
-    return pr_df, review_df
-
-def process_team(team_dir):
-    """Process a single team's data and return a DataFrame of individual metrics."""
-    team_number = os.path.basename(team_dir).replace("year-long-project-team-", "")
-    
-    pr_df, review_df = load_team_data(team_dir)
-    if pr_df is None:
+        print(f"[ERROR] Could not load {label_fp}: {e}")
         return pd.DataFrame()
 
-    # --- Preprocessing ---
-    
-    # Normalize usernames
-    # pr_author in PRs, author in reviews
-    if 'pr_author' in pr_df.columns:
-        pr_df['pr_author'] = normalize_username(pr_df['pr_author'])
-    else:
-        print(f"[ERROR] 'pr_author' column missing in PR data for team {team_number}")
+    if label_df.empty:
+        print(f"[WARN] No usable events in {label_fp}")
         return pd.DataFrame()
 
-    if 'author' in review_df.columns:
-        review_df['author'] = normalize_username(review_df['author'])
-    else:
-        # Fallback if empty or malformed
-        review_df['author'] = "" # Should effectively be empty
+    # Load PR authors
+    team_dir  = os.path.join(ROOT, "data", "csv", team_name)
+    author_df = load_pr_authors(team_dir, team_name)
 
-    # Parse Dates
-    date_cols_pr = ['created_at', 'closed_at', 'merged_at', 'updated_at']
-    for col in date_cols_pr:
-        if col in pr_df.columns:
-            pr_df[col] = pd.to_datetime(pr_df[col], utc=True, errors='coerce')
-    
-    if 'created_at' in review_df.columns:
-        review_df['created_at'] = pd.to_datetime(review_df['created_at'], utc=True, errors='coerce')
+    if author_df.empty:
+        print(f"[WARN] No author data for {team_name} — skipping")
+        return pd.DataFrame()
 
-    # Identify all developers (authors union reviewers)
-    authors = set(pr_df['pr_author'].unique())
-    reviewers = set(review_df['author'].unique())
-    all_devs = sorted(list(authors.union(reviewers)))
-    all_devs = [d for d in all_devs if d] # Remove empty strings
+    # Join events → authors
+    merged = label_df.merge(author_df, on="pr_id", how="inner")
+    if merged.empty:
+        print(f"[WARN] No pr_id overlap between labels and PR author data for {team_name}")
+        return pd.DataFrame()
 
-    metrics_list = []
+    # Compute per-developer metrics
+    rows = []
+    for dev, dev_grp in merged.groupby("pr_author"):
+        if not dev:
+            continue
+        metrics = compute_dev_metrics(dev_grp[["pr_id", "timestamp", "event"]])
+        rows.append({"team_number": team_number, "developer": dev, **metrics})
 
-    for dev in all_devs:
-        # Filter data for this developer
-        authored_prs = pr_df[pr_df['pr_author'] == dev]
-        
-        # Reviews BY this developer (on OTHER peoples' PRs usually, but we count all actions)
-        # Note: prs_reviewed definition: number of distinct PRs reviewed
-        dev_reviews = review_df[review_df['author'] == dev]
-        
-        # --- A) Activity / Volume ---
-        prs_authored = len(authored_prs)
-        prs_reviewed = dev_reviews['pr_id'].nunique() if 'pr_id' in dev_reviews.columns else 0
-        review_comments = len(dev_reviews)
-        
-        # Active Days calculation
-        # Gather all timestamps from PR creation and Review creation
-        t_authored = authored_prs['created_at'].dropna()
-        t_reviewed = dev_reviews['created_at'].dropna()
-        all_timestamps = pd.concat([t_authored, t_reviewed])
-        if not all_timestamps.empty:
-            active_days = all_timestamps.dt.date.nunique()
-        else:
-            active_days = 0
+    return pd.DataFrame(rows)
 
-        # --- B) Outcomes (Authored PRs) ---
-        # merged_at is not null -> merged
-        # OR state == 'merged'
-        # closed_no_merge: state == 'closed' AND merged_at is null
-        
-        merges_authored = 0
-        closed_no_merge_authored = 0
-        
-        if 'merged_at' in authored_prs.columns and 'state' in authored_prs.columns:
-            # Merged
-            merges_authored = authored_prs[
-                (authored_prs['merged_at'].notna()) | 
-                (authored_prs['state'].str.lower() == 'merged')
-            ].shape[0]
-            
-            # Closed without merge
-            # Strictly: closed state AND no merged_at timestamp
-            closed_no_merge_authored = authored_prs[
-                (authored_prs['state'].str.lower() == 'closed') & 
-                (authored_prs['merged_at'].isna())
-            ].shape[0]
-
-        if prs_authored > 0:
-            merge_rate_authored = merges_authored / prs_authored
-        else:
-            merge_rate_authored = np.nan
-
-        # --- Role Hint ---
-        # Heuristic: ratio of authored vs reviewed
-        total_actions = prs_authored + prs_reviewed
-        if total_actions == 0:
-            role_hint = "inactive"
-        else:
-            ratio = prs_authored / total_actions
-            if ratio >= 0.66: # Mostly authoring (2/3+)
-                role_hint = "author-heavy"
-            elif ratio <= 0.33: # Mostly reviewing (2/3+)
-                role_hint = "review-heavy"
-            else:
-                role_hint = "mixed"
-
-        # --- C) Timing (Authored PRs) ---
-        avg_pr_lifetime_hours = np.nan
-        avg_time_to_first_review_hours = np.nan
-        
-        # PR Lifetime
-        # If merged: merged_at - created_at
-        # If closed (unmerged): closed_at - created_at
-        # We can just take the first non-null of merged_at/closed_at as 'end_time'
-        # created_at must exist
-        
-        # Vectorized approach for lifetime
-        if not authored_prs.empty and 'created_at' in authored_prs.columns and 'closed_at' in authored_prs.columns and 'merged_at' in authored_prs.columns:
-            # Prefer merged_at, fallback to closed_at
-            end_times = authored_prs['merged_at'].combine_first(authored_prs['closed_at'])
-            lifetimes = end_times - authored_prs['created_at']
-            # Convert to hours
-            lifetimes_hours = lifetimes.dt.total_seconds() / 3600.0
-            avg_pr_lifetime_hours = lifetimes_hours.mean()
-
-        # Time to first review
-        # For each authored PR, find earliest review timestamp from OTHER users
-        if not authored_prs.empty and not review_df.empty and 'created_at' in authored_prs.columns and 'created_at' in review_df.columns:
-            # Filter reviews to exclude self-reviews (comments on own PR)
-            authored_pr_ids = authored_prs['pr_id'].unique()
-            
-            # Reviews on these PRs, NOT by the author
-            relevant_reviews = review_df[
-                (review_df['pr_id'].isin(authored_pr_ids)) & 
-                (review_df['author'] != dev)
-            ]
-            
-            if not relevant_reviews.empty:
-                # Find first review time per PR
-                first_reviews = relevant_reviews.groupby('pr_id')['created_at'].min().reset_index()
-                first_reviews.columns = ['pr_id', 'first_review_at']
-                
-                # Merge back to authored_prs to get creation time
-                pr_times = authored_prs[['pr_id', 'created_at']].merge(first_reviews, on='pr_id', how='inner')
-                
-                if not pr_times.empty:
-                    ttfr = pr_times['first_review_at'] - pr_times['created_at']
-                    ttfr_hours = ttfr.dt.total_seconds() / 3600.0
-                    # Filter out negative times
-                    ttfr_hours = ttfr_hours[ttfr_hours >= 0]
-                    avg_time_to_first_review_hours = ttfr_hours.mean()
-
-        # --- D) Review Dynamics ---
-        # avg_review_rounds_authored: count of distinct review submissions (timestamps/IDs) 
-        # on authored PRs where state is 'APPROVED' or 'CHANGES_REQUESTED'
-        avg_review_rounds_authored = np.nan
-        if not authored_prs.empty and not review_df.empty and 'state' in review_df.columns:
-            authored_pr_ids = authored_prs['pr_id'].unique()
-            decisive_reviews = review_df[
-                (review_df['pr_id'].isin(authored_pr_ids)) &
-                (review_df['state'].isin(['APPROVED', 'CHANGES_REQUESTED']))
-            ]
-            
-            if not decisive_reviews.empty:
-                # We want average rounds per PR.
-                # Count events per PR
-                rounds_per_pr = decisive_reviews.groupby('pr_id').size()
-                all_pr_counts = pd.Series(0, index=authored_prs['pr_id'].unique())
-                all_pr_counts = all_pr_counts.add(rounds_per_pr, fill_value=0)
-                
-                avg_review_rounds_authored = all_pr_counts.mean()
-            else:
-                avg_review_rounds_authored = 0.0
-        elif not authored_prs.empty:
-             avg_review_rounds_authored = 0.0
-
-        metrics_list.append({
-            'team_number': team_number,
-            'developer': dev,
-            'role_hint': role_hint,
-            'prs_authored': prs_authored,
-            'prs_reviewed': prs_reviewed,
-            'review_comments': review_comments,
-            'active_days': active_days,
-            'merges_authored': merges_authored,
-            'closed_no_merge_authored': closed_no_merge_authored,
-            'merge_rate_authored': round(merge_rate_authored, 3),
-            'avg_time_to_first_review_hours': round(avg_time_to_first_review_hours, 2),
-            'avg_pr_lifetime_hours': round(avg_pr_lifetime_hours, 2),
-            'avg_review_rounds_authored': round(avg_review_rounds_authored, 2)
-        })
-
-    return pd.DataFrame(metrics_list)
 
 def main():
-    # Setup paths
-    base_data_dir = os.path.join("data", "csv")
-    output_dir = os.path.join("data", "outputs", FOLDER_SOURCE)
-    
-    # 1. Identify teams
-    search_path = os.path.join(base_data_dir, "year-long-project-team-*")
-    team_dirs = glob.glob(search_path)
-    
-    print(f"[INFO] Source Folder: {base_data_dir}")
-    print(f"[INFO] Output Folder: {output_dir}")
-    print(f"[INFO] Found {len(team_dirs)} team directories.")
-    
+    config = CONFIGS.get(FILE_SOURCE)
+    if config is None:
+        raise ValueError(
+            f"Invalid FILE_SOURCE: '{FILE_SOURCE}'. Must be 'branching' or 'pr'."
+        )
+
+    data_folder    = config["data_folder"]
+    search_pattern = os.path.join(data_folder, f"{config['prefix']}{config['pattern']}")
+    label_files    = sorted(glob.glob(search_pattern))
+
+    print(f"[INFO] FILE_SOURCE   : {FILE_SOURCE}")
+    print(f"[INFO] FOLDER_SOURCE : {FOLDER_SOURCE}")
+    print(f"[INFO] Label files   : {data_folder}")
+    print(f"[INFO] Output dir    : {OUTPUT_DIR}")
+    print(f"[INFO] Found {len(label_files)} label file(s).")
+
+    if not label_files:
+        print("[WARN] No label files found. Check FILE_SOURCE and data directories.")
+        return
+
     all_metrics = []
-    
-    for team_dir in team_dirs:
-        # Check if dir
-        if not os.path.isdir(team_dir):
-            continue
-            
-        print(f"Processing {os.path.basename(team_dir)}...")
-        df = process_team(team_dir)
+    for fp in label_files:
+        print(f"  Processing {os.path.basename(fp)} ...")
+        df = process_team(fp, config)
         if not df.empty:
             all_metrics.append(df)
-            
-    if all_metrics:
-        final_df = pd.concat(all_metrics, ignore_index=True)
-        
-        # Ensure Output Directory Exists
-        os.makedirs(output_dir, exist_ok=True)
-        
-        output_path = os.path.join(output_dir, "individual_metrics.csv")
-        final_df.to_csv(output_path, index=False)
-        print(f"\n[SUCCESS] Generated metrics for {len(final_df)} developers across {final_df['team_number'].nunique()} teams.")
-        print(f"Output saved to: {output_path}")
-        
-        # Preview
-        print("\nPreview:")
-        print(final_df.head().to_string())
-    else:
-        print("\n[WARN] No metrics generated. Check data directories and file names.")
+
+    if not all_metrics:
+        print("[WARN] No metrics generated.")
+        return
+
+    final_df = pd.concat(all_metrics, ignore_index=True)
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    output_path = os.path.join(OUTPUT_DIR, "individual_metrics.csv")
+    final_df.to_csv(output_path, index=False)
+
+    print(
+        f"\n[SUCCESS] Generated metrics for {len(final_df)} developers "
+        f"across {final_df['team_number'].nunique()} team(s)."
+    )
+    print(f"Output: {output_path}")
+    print("\nColumns:", final_df.columns.tolist())
+    print("\nPreview:")
+    print(final_df.head().to_string())
+
 
 if __name__ == "__main__":
     main()
