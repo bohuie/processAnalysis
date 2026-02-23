@@ -113,6 +113,240 @@ def load_sessions_count_map(sess_fp: str) -> dict:
     return dict(zip(df["team_number"], df["num_pr_sessions"]))
 
 
+# ---------- Z-score edge pruning ----------
+
+def prune_edges_by_zscore(
+    G: nx.DiGraph,
+    z_min: float = 1.0,
+    top_k: int = 1,
+    min_out_edges_to_zscore: int = 2,
+) -> set:
+    """
+    Compute the set of (u, v) edges to KEEP after adaptive z-score pruning.
+
+    Per-source-node algorithm
+    -------------------------
+    For every source node u with outgoing edges:
+      1. Collect the weights w of all outgoing edges.
+      2. If fewer than `min_out_edges_to_zscore` edges exist, keep all
+         (not enough data to compute a meaningful z-score).
+      3. Compute mu_u = mean(weights), sigma_u = stdev(weights).
+      4. Keep edge (u → v) when ANY of the following holds:
+           a. sigma_u == 0  →  z is undefined; rely on top-K only.
+           b. sigma_u  > 0  →  z_uv = (w - mu_u) / sigma_u  >= z_min.
+           c. Always:        edge is in the top-K outgoing edges by weight.
+              Tie-break rule: descending weight, then ascending target-node
+              name (str) — ensures deterministic output.
+
+    This guarantees every node retains at least min(top_k, out_degree) edges,
+    so no source node is ever left completely isolated.
+
+    Parameters
+    ----------
+    G : nx.DiGraph
+        Graph with 'weight' attribute on every edge.
+    z_min : float
+        Minimum z-score for an edge to be kept outright (default 1.0).
+    top_k : int
+        Number of top-weight edges to always keep per source node (default 1).
+    min_out_edges_to_zscore : int
+        Only compute z-scores when a node has at least this many outgoing
+        edges (default 2). Nodes below the threshold are kept in full.
+
+    Returns
+    -------
+    set of (u, v) tuples that should be drawn.
+    """
+    keep: set = set()
+
+    for u in G.nodes():
+        out_edges = list(G.out_edges(u, data=True))  # [(u, v, data), ...]
+        if not out_edges:
+            # No outgoing edges — nothing to prune.
+            continue
+
+        # --- Sort for stable top-K selection ---
+        # Primary: descending weight.  Secondary: ascending target name.
+        out_edges_sorted = sorted(
+            out_edges,
+            key=lambda e: (-e[2]["weight"], str(e[1])),
+        )
+
+        # Always keep top-K (fallback safety net).
+        top_k_pairs = {(e[0], e[1]) for e in out_edges_sorted[:top_k]}
+
+        if len(out_edges) < min_out_edges_to_zscore:
+            # Not enough edges for a meaningful z-score — keep all.
+            for e in out_edges:
+                keep.add((e[0], e[1]))
+            continue
+
+        weights = [e[2]["weight"] for e in out_edges]
+        mu = float(np.mean(weights))
+        sigma = float(np.std(weights, ddof=0))  # population std (all edges of u)
+
+        for u_node, v_node, data in out_edges:
+            pair = (u_node, v_node)
+            w = data["weight"]
+
+            if sigma == 0:
+                # All weights identical → z is 0 for every edge;
+                # only top-K edges are kept.
+                if pair in top_k_pairs:
+                    keep.add(pair)
+            else:
+                z = (w - mu) / sigma
+                if z >= z_min or pair in top_k_pairs:
+                    keep.add(pair)
+
+    return keep
+
+
+# ---------- Connectivity-preserving pruning (3-pass) ----------
+
+class _DSU:
+    """
+    Disjoint Set Union (Union-Find) with path compression and union-by-rank.
+    Used to track connected components for bridge-repair in Pass 2.
+    """
+    def __init__(self, nodes):
+        self._parent = {n: n for n in nodes}
+        self._rank   = {n: 0 for n in nodes}
+
+    def find(self, x):
+        # Path compression
+        if self._parent[x] != x:
+            self._parent[x] = self.find(self._parent[x])
+        return self._parent[x]
+
+    def union(self, x, y) -> bool:
+        """Merge components of x and y.  Returns True iff they were separate."""
+        rx, ry = self.find(x), self.find(y)
+        if rx == ry:
+            return False
+        if self._rank[rx] < self._rank[ry]:
+            rx, ry = ry, rx
+        self._parent[ry] = rx
+        if self._rank[rx] == self._rank[ry]:
+            self._rank[rx] += 1
+        return True
+
+    def same(self, x, y) -> bool:
+        return self.find(x) == self.find(y)
+
+    def num_components(self) -> int:
+        return len({self.find(n) for n in self._parent})
+
+
+def prune_edges_connectivity_preserving(
+    G: nx.DiGraph,
+    z_min: float = 1.0,
+    top_k: int = 1,
+    min_out_edges_to_zscore: int = 2,
+    user_label: str = "",
+) -> set:
+    """
+    3-pass connectivity-preserving edge pruning.
+
+    Pass 1 — z-score pruning (delegates to prune_edges_by_zscore)
+    Pass 2 — connectivity repair: greedily add back the minimum number of
+             original edges needed to make the pruned graph weakly connected,
+             using a DSU.  Candidate bridge edges are scored by descending
+             weight then ascending (u, v) for determinism.
+    Pass 3 — orphan guardrail: any node with zero incident edges in the kept
+             set gets its single strongest original incident edge restored.
+
+    Returns the set of (u, v) pairs to draw.
+    """
+    all_nodes = set(G.nodes())
+    edges_before = G.number_of_edges()
+
+    # ── PASS 1: z-score pruning ───────────────────────────────────────────
+    keep_set = prune_edges_by_zscore(
+        G, z_min=z_min, top_k=top_k,
+        min_out_edges_to_zscore=min_out_edges_to_zscore,
+    )
+    edges_after_pass1 = len(keep_set)
+
+    # Build initial DSU from pass-1 kept edges (treating graph as undirected).
+    dsu = _DSU(all_nodes)
+    for u, v in keep_set:
+        dsu.union(u, v)
+    n_comp_pass1 = dsu.num_components()
+
+    # ── PASS 2: connectivity repair ───────────────────────────────────────
+    edges_added_conn = 0
+    if n_comp_pass1 > 1:
+        # Candidate bridges: original edges NOT already kept,
+        # whose endpoints sit in different components.
+        # Sort: (-weight, u, v) for determinism on ties.
+        candidates = sorted(
+            [
+                (u, v, data["weight"])
+                for u, v, data in G.edges(data=True)
+                if (u, v) not in keep_set
+            ],
+            key=lambda e: (-e[2], str(e[0]), str(e[1])),
+        )
+        for u, v, _w in candidates:
+            if dsu.num_components() == 1:
+                break
+            if not dsu.same(u, v):
+                dsu.union(u, v)
+                keep_set.add((u, v))
+                edges_added_conn += 1
+    n_comp_after_repair = dsu.num_components()
+    edges_after_conn = len(keep_set)
+
+    # ── PASS 3: orphan guardrail ──────────────────────────────────────────
+    # A node is "orphaned" if it has no incident edge in keep_set at all
+    # (neither as source nor as target — degree 0 in undirected sense).
+    incident: set = set()
+    for u, v in keep_set:
+        incident.add(u)
+        incident.add(v)
+    orphans = sorted(all_nodes - incident)  # sorted for determinism
+
+    orphan_fixes = 0
+    for node in orphans:
+        # Collect all incident edges (in + out) from the original graph.
+        candidates = [
+            (u, v, data["weight"])
+            for u, v, data in G.out_edges(node, data=True)
+        ] + [
+            (u, v, data["weight"])
+            for u, v, data in G.in_edges(node, data=True)
+        ]
+        if not candidates:
+            continue  # truly isolated in the original — leave it
+        # Pick strongest; tie-break: ascending (u, v) as strings.
+        best_u, best_v, _ = min(
+            candidates,
+            key=lambda e: (-e[2], str(e[0]), str(e[1])),
+        )
+        keep_set.add((best_u, best_v))
+        orphan_fixes += 1
+    edges_after_orphan = len(keep_set)
+
+    # ── Diagnostics ───────────────────────────────────────────────────────
+    tag = f"[PRUNE] {user_label}:" if user_label else "[PRUNE]"
+    print(
+        f"{tag} {edges_before} edges"
+        f" → P1:{edges_after_pass1}"
+        f" → Conn:{edges_after_conn} (+{edges_added_conn} bridges)"
+        f" → Final:{edges_after_orphan} (+{orphan_fixes} orphan fixes)"
+        f"  |  components: {n_comp_pass1}→{n_comp_after_repair}"
+        f"  |  z_min={z_min}, top_k={top_k}"
+    )
+    if n_comp_after_repair > 1:
+        print(
+            f"[WARN] {user_label}: {n_comp_after_repair} component(s) remain after "
+            f"repair — the original graph may have truly disconnected subgraphs."
+        )
+
+    return keep_set
+
+
 # ---------- Rendering (same styling as old script) ----------
 def build_markov_graph(user_label, edges_df, event_freq, output_path,
                        title_suffix="", normalize_probs=True,
@@ -136,6 +370,21 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
     for u, v in G.edges():
         total = sum(G[u][x]["weight"] for x in G.successors(u))
         G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0
+
+    # ---- Edge pruning (z-score + connectivity repair) ----
+    z_min              = getattr(config, "z_min",               1.0)
+    top_k              = getattr(config, "top_k",               1)
+    preserve_conn      = getattr(config, "preserve_connectivity", True)
+
+    if preserve_conn:
+        keep_set = prune_edges_connectivity_preserving(
+            G, z_min=z_min, top_k=top_k, user_label=user_label
+        )
+    else:
+        # Legacy path: simple z-score only, no connectivity guarantee.
+        keep_set = prune_edges_by_zscore(G, z_min=z_min, top_k=top_k)
+        print(f"[PRUNE] {user_label}: {G.number_of_edges()} edges "
+              f"→ {len(keep_set)} kept  (connectivity repair disabled)")
 
     # Draw
     dot = Digraph(comment=f"Markov — {user_label}", format="png")
@@ -193,10 +442,14 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
             )
 
     for u, v, data in G.edges(data=True):
+        # Skip edges removed by z-score pruning.
+        if (u, v) not in keep_set:
+            continue
+
         p = data.get("prob", 0.0)
-        
-        # Pruning check (visual only)
-        min_prob = config.min_edge_prob if config else 0.0
+
+        # Secondary visual filter: fixed minimum probability threshold.
+        min_prob = getattr(config, "min_edge_prob", 0.0)
         if p < min_prob:
             continue
 
@@ -342,7 +595,14 @@ def main():
                         help="Graphviz size string (e.g. '8,5')")
     parser.add_argument("--min-edge-prob", type=float, default=0.0,
                         help="Minimum edge probability to draw (visual pruning), default: 0.0")
-    
+    parser.add_argument("--z-min", type=float, default=1.0,
+                        help="Z-score threshold: keep outgoing edges with z >= Z_MIN (default: 1.0)")
+    parser.add_argument("--top-k", type=int, default=1,
+                        help="Always keep the top-K highest-weight outgoing edges per node (default: 1)")
+    parser.add_argument("--no-preserve-connectivity", dest="preserve_connectivity",
+                        action="store_false", default=True,
+                        help="Disable connectivity repair (Pass 2 + 3); use raw z-score pruning only")
+
     args = parser.parse_args()
 
     # Process both datasets
