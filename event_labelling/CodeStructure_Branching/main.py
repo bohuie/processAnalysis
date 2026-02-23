@@ -40,6 +40,7 @@ from .label_feature_size import label_feature_size
 from .label_refactor_size import label_refactor_size
 from .label_repo_status import label_repo_status
 from .label_pr_status import label_pr_status
+from .clean_lables import process_all_teams as clean_all_teams
 
 # === SETUP ============================================================
 MODEL_NAME = "llama3.2:3b"
@@ -286,6 +287,21 @@ def process_all_teams():
     print("\n" + "="*70)
     print("[COMPLETE] All label generation finished successfully!")
     print("="*70)
+    
+    # STEP 3: Clean and prepare labels for process model
+    print("\n" + "="*70)
+    print("STEP 3: CLEANING LABELS FOR PROCESS MODEL")
+    print("="*70)
+    
+    try:
+        clean_all_teams("data/graph_labels")
+        print("\n" + "="*70)
+        print("[COMPLETE] All labels cleaned successfully!")
+        print("="*70)
+    except Exception as e:
+        print(f"\n[ERROR] Failed to clean labels: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     process_all_teams()
