@@ -113,14 +113,248 @@ def load_sessions_count_map(sess_fp: str) -> dict:
     return dict(zip(df["team_number"], df["num_pr_sessions"]))
 
 
-# ---------- Z-score edge pruning ----------
+# ---------- Cross-team IDF edge pruning (3-pass) ----------
+import math as _math
 
-def prune_edges_by_zscore(
+
+class _DSU:
+    """
+    Disjoint Set Union (Union-Find) with path compression + union-by-rank.
+    Used by repair_connectivity (Pass 2).
+    """
+    def __init__(self, nodes):
+        self._parent = {n: n for n in nodes}
+        self._rank   = {n: 0 for n in nodes}
+
+    def find(self, x):
+        if self._parent[x] != x:
+            self._parent[x] = self.find(self._parent[x])
+        return self._parent[x]
+
+    def union(self, x, y) -> bool:
+        """Merge x and y. Returns True iff they were in different components."""
+        rx, ry = self.find(x), self.find(y)
+        if rx == ry:
+            return False
+        if self._rank[rx] < self._rank[ry]:
+            rx, ry = ry, rx
+        self._parent[ry] = rx
+        if self._rank[rx] == self._rank[ry]:
+            self._rank[rx] += 1
+        return True
+
+    def same(self, x, y) -> bool:
+        return self.find(x) == self.find(y)
+
+
+def build_edge_idf_map(all_teams_df: pd.DataFrame, min_count: int = 2) -> tuple:
+    """
+    Compute a cross-team Inverse Document Frequency (IDF) map for edges.
+
+    An edge (u->v) is "present" in a team if that team's count >= min_count.
+    IDF rewards edges that appear in few teams (distinctive) and penalises
+    edges that appear in many teams (common).
+
+        idf[(u,v)] = log((N+1) / (df+1)) + 1    (smooth, always positive)
+
+    Edges not meeting the presence threshold in any team receive the neutral
+    value 1.0 to avoid amplifying noise.
+
+    Parameters
+    ----------
+    all_teams_df : DataFrame with columns team_number, from, to, count
+    min_count    : minimum count to consider an edge "present" in a team
+
+    Returns
+    -------
+    (idf_map, N)
+        idf_map : dict {(from_node, to_node): idf_float}
+        N       : int  number of distinct teams
+    """
+    df = all_teams_df.copy()
+    N = int(df["team_number"].nunique())
+    if N == 0:
+        return {}, 0
+
+    present = df[df["count"] >= min_count][["team_number", "from", "to"]].drop_duplicates()
+    doc_freq = present.groupby(["from", "to"]).size()  # Series indexed by (from, to)
+
+    idf_map: dict = {}
+    for (u, v), dfe in doc_freq.items():
+        idf_map[(str(u), str(v))] = _math.log((N + 1) / (dfe + 1)) + 1
+    # Missing edges (below threshold or absent) default to neutral 1.0
+    return idf_map, N
+
+
+def score_team_edges(
     G: nx.DiGraph,
-    z_min: float = 1.0,
+    idf_map: dict,
+    strength_mode: str = "prob",
+) -> dict:
+    """
+    Compute a distinctiveness score for every edge in G.
+
+        score[(u,v)] = strength * idf
+
+    strength = G[u][v]["prob"]   if strength_mode == "prob"  (default)
+             = G[u][v]["weight"] if strength_mode == "count"
+
+    IDF for edges not in idf_map defaults to 1.0 (neutral).
+
+    Returns dict {(u, v): score}.
+    """
+    scores: dict = {}
+    for u, v, data in G.edges(data=True):
+        idf = idf_map.get((str(u), str(v)), 1.0)
+        if strength_mode == "prob":
+            strength = data.get("prob", 0.0)
+        else:
+            strength = data.get("weight", 0.0)
+        scores[(u, v)] = strength * idf
+    return scores
+
+
+def prune_team_edges_distinctive(
+    G: nx.DiGraph,
+    scores: dict,
     top_k: int = 1,
-    min_out_edges_to_zscore: int = 2,
+    score_min: float | None = None,
 ) -> set:
+    """
+    Pass 1 — distinctiveness-based pruning.
+
+    For each source node u (iterated in sorted order for determinism):
+      - Sort outgoing edges by (-score, -weight, str(v)).
+      - Keep edge (u->v) if it is in the top-K outgoing edges for u,
+        or if score >= score_min (when score_min is set).
+
+    Top-K guarantees every node that has outgoing edges retains at least
+    min(top_k, out_degree) of them.  Pass 3 handles fully isolated nodes.
+
+    Returns set of (u, v) pairs to draw.
+    """
+    keep: set = set()
+
+    for u in sorted(G.nodes(), key=str):
+        out_edges = list(G.out_edges(u, data=True))
+        if not out_edges:
+            continue
+
+        # Sort: best score first; tie-break by weight then target name.
+        out_sorted = sorted(
+            out_edges,
+            key=lambda e: (-scores.get((e[0], e[1]), 0.0), -e[2]["weight"], str(e[1])),
+        )
+
+        for rank, (uu, vv, _data) in enumerate(out_sorted):
+            pair = (uu, vv)
+            sc   = scores.get(pair, 0.0)
+            if rank < top_k:
+                keep.add(pair)          # always keep top-K
+            elif score_min is not None and sc >= score_min:
+                keep.add(pair)          # also keep if above threshold
+
+    return keep
+
+
+def repair_connectivity(
+    keep_set: set,
+    G: nx.DiGraph,
+    scores: dict,
+    all_nodes: set,
+) -> tuple:
+    """
+    Pass 2 — greedy connectivity repair using DSU.
+
+    Treats the pruned edge set as an undirected graph.  If more than one
+    weakly-connected component exists among all_nodes, adds back the
+    minimum number of original edges (bridge candidates) needed to
+    reach a single component.
+
+    Bridge candidates are sorted by (-score, -weight, str(u), str(v))
+    for determinism.
+
+    Uses an integer `remaining` counter (not num_components() per loop)
+    for O(alpha) convergence check.
+
+    Returns (updated_keep_set, n_comp_before, edges_added).
+    """
+    dsu = _DSU(sorted(all_nodes, key=str))
+    for u, v in keep_set:
+        dsu.union(u, v)
+
+    n_comp_before = len({dsu.find(n) for n in all_nodes})
+    remaining     = n_comp_before
+    edges_added   = 0
+
+    if remaining > 1:
+        candidates = sorted(
+            [
+                (u, v, data["weight"])
+                for u, v, data in G.edges(data=True)
+                if (u, v) not in keep_set
+            ],
+            key=lambda e: (-scores.get((e[0], e[1]), 0.0), -e[2], str(e[0]), str(e[1])),
+        )
+        for u, v, _w in candidates:
+            if remaining == 1:
+                break
+            if dsu.union(u, v):          # True → were in different components
+                keep_set.add((u, v))
+                edges_added += 1
+                remaining   -= 1
+
+    n_comp_after = len({dsu.find(n) for n in all_nodes})
+    return keep_set, n_comp_before, n_comp_after, edges_added
+
+
+def fix_orphans(
+    keep_set: set,
+    G: nx.DiGraph,
+    scores: dict,
+    all_nodes: set,
+) -> tuple:
+    """
+    Pass 3 — orphan guardrail.
+
+    Any node with degree 0 in the undirected sense of the pruned edge set
+    gets its single strongest incident edge (in or out) restored from the
+    original graph.  Iteration order is sorted for determinism.
+
+    Returns (updated_keep_set, orphan_count_fixed).
+    """
+    incident: set = set()
+    for u, v in keep_set:
+        incident.add(u)
+        incident.add(v)
+    orphans = sorted(all_nodes - incident, key=str)
+
+    fixes = 0
+    for node in orphans:
+        candidates = [
+            (u, v, data["weight"])
+            for u, v, data in G.out_edges(node, data=True)
+        ] + [
+            (u, v, data["weight"])
+            for u, v, data in G.in_edges(node, data=True)
+        ]
+        if not candidates:
+            continue
+        best_u, best_v, _ = min(
+            candidates,
+            key=lambda e: (
+                -scores.get((e[0], e[1]), 0.0),
+                -e[2],
+                str(e[0]),
+                str(e[1]),
+            ),
+        )
+        keep_set.add((best_u, best_v))
+        fixes += 1
+
+    return keep_set, fixes
+
+
     """
     Compute the set of (u, v) edges to KEEP after adaptive z-score pruning.
 
@@ -347,10 +581,11 @@ def prune_edges_connectivity_preserving(
     return keep_set
 
 
-# ---------- Rendering (same styling as old script) ----------
+# ---------- Rendering ----------
 def build_markov_graph(user_label, edges_df, event_freq, output_path,
                        title_suffix="", normalize_probs=True,
-                       teams_in_cluster=None, config=None):
+                       teams_in_cluster=None, config=None,
+                       idf_map=None, n_teams=1):
     edges_df = edges_df.copy()
     edges_df = edges_df[edges_df["count"] > 0]
     if edges_df.empty:
@@ -360,31 +595,59 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
     # Build directed graph with weights
     G = nx.DiGraph()
     for _, row in edges_df.iterrows():
-        a, b, w = row["from"], row["to"], float(row["count"])
+        a, b, w = str(row["from"]), str(row["to"]), float(row["count"])
         if G.has_edge(a, b):
             G[a][b]["weight"] += w
         else:
             G.add_edge(a, b, weight=w)
 
-    # Probabilities
+    # Probabilities (needed before scoring)
     for u, v in G.edges():
         total = sum(G[u][x]["weight"] for x in G.successors(u))
-        G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0
+        G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0.0
 
-    # ---- Edge pruning (z-score + connectivity repair) ----
-    z_min              = getattr(config, "z_min",               1.0)
-    top_k              = getattr(config, "top_k",               1)
-    preserve_conn      = getattr(config, "preserve_connectivity", True)
+    # ---- IDF distinctiveness pruning (3-pass) ----
+    orientation   = getattr(config, "orientation", "horizontal")
+    top_k_cli     = getattr(config, "top_k", None)   # None means auto
+    top_k         = top_k_cli if top_k_cli is not None else (2 if orientation == "vertical" else 1)
+    score_min     = getattr(config, "score_min", None)
+    preserve_conn = getattr(config, "preserve_connectivity", True)
+    idf_map       = idf_map or {}
+
+    # Score: prob × idf  (strength_mode=prob; degrades to weight if prob==0)
+    scores = score_team_edges(G, idf_map, strength_mode="prob")
+
+    all_nodes = set(G.nodes())
+    edges_before = G.number_of_edges()
+
+    # Pass 1
+    keep_set  = prune_team_edges_distinctive(G, scores, top_k=top_k, score_min=score_min)
+    p1_count  = len(keep_set)
 
     if preserve_conn:
-        keep_set = prune_edges_connectivity_preserving(
-            G, z_min=z_min, top_k=top_k, user_label=user_label
-        )
+        # Pass 2
+        keep_set, n_comp_p1, n_comp_after, bridges = repair_connectivity(keep_set, G, scores, all_nodes)
+        conn_count = len(keep_set)
+        # Pass 3
+        keep_set, orphan_fixes = fix_orphans(keep_set, G, scores, all_nodes)
     else:
-        # Legacy path: simple z-score only, no connectivity guarantee.
-        keep_set = prune_edges_by_zscore(G, z_min=z_min, top_k=top_k)
-        print(f"[PRUNE] {user_label}: {G.number_of_edges()} edges "
-              f"→ {len(keep_set)} kept  (connectivity repair disabled)")
+        n_comp_p1 = n_comp_after = bridges = conn_count = orphan_fixes = 0
+        conn_count = p1_count
+
+    final_count = len(keep_set)
+
+    # Diagnostics
+    tag = f"[PRUNE] {user_label}:"
+    print(
+        f"{tag} {edges_before} edges"
+        f" → P1:{p1_count}"
+        f" → Conn:{conn_count} (+{bridges} bridges)"
+        f" → Final:{final_count} (+{orphan_fixes} orphan fixes)"
+        f"  |  components: {n_comp_p1}→{n_comp_after}"
+        f"  |  top_k={top_k}, score_min={score_min}"
+    )
+    if n_comp_after > 1:
+        print(f"[WARN] {user_label}: {n_comp_after} component(s) remain — original graph may be disconnected.")
 
     # Draw
     dot = Digraph(comment=f"Markov — {user_label}", format="png")
@@ -415,7 +678,7 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
         labelfontcolor="#000", penwidth="1.5"
     )
 
-    for node in G.nodes():
+    for node in sorted(G.nodes(), key=str):
         if node == "START":
             dot.node(
                 str(node), label="START",
@@ -442,7 +705,7 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
             )
 
     for u, v, data in G.edges(data=True):
-        # Skip edges removed by z-score pruning.
+        # Skip edges removed by IDF pruning.
         if (u, v) not in keep_set:
             continue
 
@@ -473,7 +736,18 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
 
 
 # ---------- Team graphs ----------
-def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict, out_teams_dir: str, category_label: str, config=None):
+def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict,
+                       out_teams_dir: str, category_label: str, config=None,
+                       overall_idf: dict = None, avg_idf: dict = None, n_teams: int = 1):
+    """
+    Render per-team overall and avg-session Markov graphs.
+
+    IDF maps are computed ONCE by the caller (main) from all teams' data
+    and passed in here — never recomputed per team.
+    """
+    overall_idf = overall_idf or {}
+    avg_idf     = avg_idf     or {}
+
     teams = sorted(set(overall_df["team_number"]).union(set(avg_df["team_number"])),
                    key=lambda x: int(x) if str(x).isdigit() else 999999)
 
@@ -481,7 +755,7 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
         team_str = _as_str_team(team)
         team_dir = os.path.join(out_teams_dir, f"year-long-project-team-{team_str}")
         out_overall_dir = os.path.join(team_dir, "team_overall")
-        out_avg_dir = os.path.join(team_dir, "team_avg_session")
+        out_avg_dir     = os.path.join(team_dir, "team_avg_session")
         ensure_dir(out_overall_dir)
         ensure_dir(out_avg_dir)
 
@@ -496,6 +770,8 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             output_path=os.path.join(out_overall_dir, f"team{team_str}_overall.png"),
             title_suffix=f"Overall • {category_label}",
             config=config,
+            idf_map=overall_idf,
+            n_teams=n_teams,
         )
 
         # Avg session (START/END expected)
@@ -507,6 +783,8 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             output_path=os.path.join(out_avg_dir, f"team{team_str}_avg_session.png"),
             title_suffix=f"Avg Session • {category_label}",
             config=config,
+            idf_map=avg_idf,
+            n_teams=n_teams,
         )
 
 
@@ -548,7 +826,14 @@ def _aggregate_cluster_event_freq(freq_map: dict, teams: list[str]) -> dict:
     return out
 
 
-def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: dict, in_cluster_fp: str, out_clusters_dir: str, category_label: str, config=None):
+def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: dict,
+                          in_cluster_fp: str, out_clusters_dir: str, category_label: str,
+                          config=None, idf_map: dict = None, n_teams: int = 1):
+    """
+    Render cluster Markov graphs using the SAME global IDF map as team graphs
+    (computed from overall_df in main).  Overlap is measured against the full
+    team population, not just the cluster subset.
+    """
     if not os.path.exists(in_cluster_fp):
         print(f"[INFO] No cluster CSV found at {in_cluster_fp} — skipping cluster graphs.")
         return
@@ -584,6 +869,8 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
             title_suffix=f"Z-filtered Avg Session • {category_label}",
             teams_in_cluster=teams,
             config=config,
+            idf_map=idf_map or {},
+            n_teams=n_teams,
         )
 
 
@@ -595,15 +882,19 @@ def main():
                         help="Graphviz size string (e.g. '8,5')")
     parser.add_argument("--min-edge-prob", type=float, default=0.0,
                         help="Minimum edge probability to draw (visual pruning), default: 0.0")
-    parser.add_argument("--z-min", type=float, default=1.0,
-                        help="Z-score threshold: keep outgoing edges with z >= Z_MIN (default: 1.0)")
-    parser.add_argument("--top-k", type=int, default=1,
-                        help="Always keep the top-K highest-weight outgoing edges per node (default: 1)")
+    parser.add_argument("--z-min", type=float, default=None,
+                        help="TODO: deprecated — ignored. Use --score-min instead.")
+    parser.add_argument("--score-min", type=float, default=None,
+                        help="Minimum IDF distinctiveness score to keep an edge (default: off; top-K only)")
+    parser.add_argument("--top-k", type=int, default=None,
+                        help="Always keep top-K outgoing edges per node (default: 2 vertical, 1 horizontal)")
     parser.add_argument("--no-preserve-connectivity", dest="preserve_connectivity",
                         action="store_false", default=True,
-                        help="Disable connectivity repair (Pass 2 + 3); use raw z-score pruning only")
+                        help="Disable connectivity repair (Pass 2 + 3)")
 
     args = parser.parse_args()
+    if args.z_min is not None:
+        print("[WARN] --z-min is deprecated and ignored. Use --score-min instead.")
 
     # Process both datasets
     for dataset_name, cfg in CONFIGS.items():
@@ -657,11 +948,21 @@ def main():
         out_teams_dir = out_base_dir
         out_clusters_dir = os.path.join(out_base_dir, "clusters")
 
+        # Compute IDF maps ONCE from team-level data before any per-team rendering.
+        # Clusters reuse overall_idf so overlap is measured against the full population.
+        print(f"[INFO] Computing cross-team IDF maps...")
+        n_teams = int(overall_df["team_number"].nunique())
+        overall_idf, _ = build_edge_idf_map(overall_df)
+        avg_idf,     _ = build_edge_idf_map(avg_df)
+        print(f"[INFO] IDF computed over {n_teams} team(s); {len(overall_idf)} overall edges, {len(avg_idf)} avg edges.")
+
         print(f"[INFO] Rendering team graphs...")
-        render_team_graphs(overall_df, avg_df, freq_map, out_teams_dir, category_label, config=args)
-        
+        render_team_graphs(overall_df, avg_df, freq_map, out_teams_dir, category_label,
+                           config=args, overall_idf=overall_idf, avg_idf=avg_idf, n_teams=n_teams)
+
         print(f"[INFO] Rendering cluster graphs...")
-        render_cluster_graphs(zfilt_df, freq_map, sess_count, in_cluster_fp, out_clusters_dir, category_label, config=args)
+        render_cluster_graphs(zfilt_df, freq_map, sess_count, in_cluster_fp, out_clusters_dir,
+                              category_label, config=args, idf_map=overall_idf, n_teams=n_teams)
 
         print(f"[✅ OK] Graphs written to: {out_base_dir}")
 
