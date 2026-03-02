@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 
@@ -56,6 +57,46 @@ def build_team_matrix(df: pd.DataFrame, z_threshold: float):
     return teams, pairs, X, df_filt
 
 
+def compute_elbow_scores(X: np.ndarray, k_min=2, k_max=10):
+    """Compute inertia (within-cluster sum of squares) for elbow method.
+    
+    Args:
+        X: Data matrix (n_samples, n_features)
+        k_min: Minimum number of clusters
+        k_max: Maximum number of clusters
+    
+    Returns:
+        Dictionary with k values and corresponding inertias
+    """
+    n = X.shape[0]
+    k_max = min(k_max, n - 1)
+    
+    elbow_data = {"k": [], "inertia": []}
+    
+    for k in range(k_min, k_max + 1):
+        km = KMeans(n_clusters=k, n_init=25, random_state=42)
+        km.fit(X)
+        elbow_data["k"].append(k)
+        elbow_data["inertia"].append(km.inertia_)
+    
+    return elbow_data
+
+
+def plot_elbow_scores(elbow_scores: dict, output_path: str, title: str) -> None:
+    if not elbow_scores or not elbow_scores.get("k"):
+        return
+
+    plt.figure(figsize=(6, 4))
+    plt.plot(elbow_scores["k"], elbow_scores["inertia"], marker="o")
+    plt.title(title)
+    plt.xlabel("Number of clusters (k)")
+    plt.ylabel("Inertia")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
+
+
 def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
     n = X.shape[0]
     if n < 3:
@@ -92,6 +133,10 @@ def main():
         filtered_edges_out_fp = os.path.join(
             data_dir, f"team_transition_edges_avg_session_zfiltered_{cluster_suffix}.csv"
         )
+        matrix_out_fp = os.path.join(data_dir, f"team_transition_matrix_{cluster_suffix}.csv")
+        filtered_edges_out_fp = os.path.join(
+            data_dir, f"team_transition_edges_avg_session_zfiltered_{cluster_suffix}.csv"
+        )
         
         if not os.path.exists(in_fp):
             print(f"[SKIP] Missing input: {in_fp}")
@@ -103,8 +148,15 @@ def main():
         
         print("[INFO] Building team matrix...")
         teams, pairs, X, df_filt = build_team_matrix(df, z_threshold=Z_THRESHOLD)
+        teams, pairs, X, df_filt = build_team_matrix(df, z_threshold=Z_THRESHOLD)
 
         nonzero_mask = (X.sum(axis=1) > 0)
+        kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
+        X = X[nonzero_mask]
+        
+        dropped = int((~nonzero_mask).sum())
+        if dropped:
+            print(f"[INFO] Dropped {dropped} teams with all-zero vectors at |z| ≥ {Z_THRESHOLD}")
         kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
         X = X[nonzero_mask]
         
@@ -116,7 +168,16 @@ def main():
         df_filt = df_filt.copy()
         df_filt["team_number"] = df_filt["team_number"].astype(str)
         df_filt_kept = df_filt[df_filt["team_number"].isin(set(map(str, kept_teams)))].copy()
+        # export z-filtered edges for kept teams
+        df_filt = df_filt.copy()
+        df_filt["team_number"] = df_filt["team_number"].astype(str)
+        df_filt_kept = df_filt[df_filt["team_number"].isin(set(map(str, kept_teams)))].copy()
 
+        cols_first = ["team_number", "from", "to", "count", "z_score"]
+        remaining = [c for c in df_filt_kept.columns if c not in cols_first]
+        df_filt_kept = df_filt_kept[cols_first + remaining]
+        df_filt_kept.to_csv(filtered_edges_out_fp, index=False)
+        print(f"[OK] Wrote z-filtered edges: {filtered_edges_out_fp}")
         cols_first = ["team_number", "from", "to", "count", "z_score"]
         remaining = [c for c in df_filt_kept.columns if c not in cols_first]
         df_filt_kept = df_filt_kept[cols_first + remaining]
@@ -129,7 +190,18 @@ def main():
         matrix_df.index.name = "team_number"
         matrix_df.to_csv(matrix_out_fp)
         print(f"[OK] Wrote transition matrix: {matrix_out_fp}")
+        # export transition matrix
+        col_names = [f"{a}->{b}" for (a, b) in pairs]
+        matrix_df = pd.DataFrame(X, index=kept_teams, columns=col_names)
+        matrix_df.index.name = "team_number"
+        matrix_df.to_csv(matrix_out_fp)
+        print(f"[OK] Wrote transition matrix: {matrix_out_fp}")
 
+        if X.shape[0] < 2:
+            out = pd.DataFrame({"team_number": kept_teams, "cluster_id": [0] * len(kept_teams)})
+            out.to_csv(out_fp, index=False)
+            print(f"[OK] Wrote: {out_fp} (not enough teams to cluster)")
+            continue
         if X.shape[0] < 2:
             out = pd.DataFrame({"team_number": kept_teams, "cluster_id": [0] * len(kept_teams)})
             out.to_csv(out_fp, index=False)
@@ -138,6 +210,11 @@ def main():
 
         print("[INFO] Performing clustering...")
         best_k, best_sil = choose_best_k(X)
+        elbow_scores = None
+        if X.shape[0] >= 3:
+            elbow_scores = compute_elbow_scores(X)
+        else:
+            print("[INFO] Skipping elbow scores (need >= 3 teams).")
         km = KMeans(n_clusters=best_k, n_init=25, random_state=42)
         clusters = km.fit_predict(X)
 
@@ -149,6 +226,23 @@ def main():
         })
         out.to_csv(out_fp, index=False)
         print(f"[OK] Wrote: {out_fp}")
+        
+        # Save elbow scores + plot
+        if elbow_scores and elbow_scores.get("k"):
+            elbow_fp = os.path.join(data_dir, f"elbow_scores_{cluster_suffix}.csv")
+            elbow_df = pd.DataFrame(elbow_scores)
+            elbow_df.to_csv(elbow_fp, index=False)
+            print(f"[OK] Wrote: {elbow_fp}")
+
+            elbow_png = os.path.join(data_dir, f"elbow_plot_{cluster_suffix}.png")
+            plot_elbow_scores(
+                elbow_scores,
+                elbow_png,
+                title=f"Elbow Plot ({cluster_suffix})"
+            )
+            print(f"[OK] Wrote: {elbow_png}")
+        else:
+            print("[INFO] Skipping elbow CSV/plot (no valid k range).")
 
 
 if __name__ == "__main__":
