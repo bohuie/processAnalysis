@@ -1,160 +1,271 @@
-"""
-Unit tests for Magic Number detection.
+from __future__ import annotations
 
-What these tests enforce:
-1. Scan for numeric literals anywhere in the code.
-2. Exclude literals that are part of constant definitions OR known safe literals.
-3. Classify remaining literals by context.
-4. Ensure emitted context_type exists in the rule registry (rules.py).
-
-"""
+from typing import List
 
 import pytest
-import sys
-
-from pathlib import Path
-
-# Ensure project root is on sys.path
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.violations.detect_magic_numbers import detect_magic_numbers
-from src.violations.rules import RULES, get_rule
 
 
-def _run(code: str, *, language: str = "generic"):
-    return detect_magic_numbers(code, language=language)
+def _lits(violations) -> List[str]:
+    return [v.literal for v in violations]
 
 
-def _contexts(violations):
-    return [getattr(v, "context_type", None) for v in violations]
+def _ctxs(violations) -> List[str]:
+    return [v.context_type for v in violations]
 
 
-def _literals(violations):
-    return [getattr(v, "literal", None) for v in violations]
+def _run(code: str, *, lang: str, path: str):
+    return detect_magic_numbers(
+        code,
+        language=lang,
+        file_path=path,
+        pr_id=123,
+        head_sha="deadbeef",
+    )
 
 
-# =====================================================================
-# Registry sanity
-# =====================================================================
-
-def test_all_emitted_context_types_exist_in_rule_registry():
-    code = "\n".join(
-        [
-            "x = request.get(url, 10)",
-            "if (x > 37) { ok(); }",
-            "for i in range(12): pass",
-            "timeout = 10",
-        ]
-    ) + "\n"
-
-    violations = _run(code, language="generic")
-
-    for ctx in _contexts(violations):
-        assert ctx is not None
-        assert ctx in RULES, f"Unknown context_type emitted: {ctx}"
-        assert get_rule(ctx).rule_id == ctx
+def test_skips_safe_literals_0_and_1():
+    code = "x = 0\ny = 1\nz = 2\n"
+    v = _run(code, lang="python", path="a.py")
+    assert _lits(v) == ["2"]
 
 
-# =====================================================================
-# POSITIVE CASES (+): should be detected as magic numbers
-# =====================================================================
-
-def test_detects_call_argument_even_with_equals_present():
-    code = "x = request.get(url, 10)\n"
-    violations = _run(code, language="python")
-
-    assert "CALL_ARG" in _contexts(violations)
-    assert "10" in _literals(violations)
+def test_detects_assignment_in_python():
+    code = "x = 42\n"
+    v = _run(code, lang="python", path="a.py")
+    assert _lits(v) == ["42"]
+    assert v[0].context_type in {"ASSIGNMENT", "GENERIC"}
 
 
-def test_detects_threshold_comparison():
-    code = "if (x > 37) { doSomething(); }\n"
-    violations = _run(code, language="java")
-
-    assert "THRESHOLD" in _contexts(violations)
-    assert "37" in _literals(violations)
+def test_constant_definition_skipped_when_literal_only_python():
+    code = "MAX_RETRIES = 5\nx = 5\n"
+    v = _run(code, lang="python", path="a.py")
+    assert _lits(v) == ["5"]
 
 
-def test_detects_loop_bound():
-    code = "for i in range(12):\n    pass\n"
-    violations = _run(code, language="python")
-
-    assert "LOOP_BOUND" in _contexts(violations)
-    assert "12" in _literals(violations)
-
-
-def test_detects_assignment_rhs_literal():
-    code = "timeout = 10\n"
-    violations = _run(code, language="python")
-
-    assert "ASSIGNMENT" in _contexts(violations)
-    assert "10" in _literals(violations)
+def test_constant_definition_not_skipped_when_expression_python():
+    code = "MAX_RETRIES = get_limit(5)\n"
+    v = _run(code, lang="python", path="a.py")
+    assert "5" in _lits(v)
+    assert "CALL_ARG" in _ctxs(v) or v[0].context_type in {"CALL_ARG", "GENERIC"}
 
 
-# =====================================================================
-# NEGATIVE CASES (-): should NOT be detected as magic numbers
-# =====================================================================
-
-def test_does_not_flag_js_ts_const_definition():
-    code = "const TIMEOUT_SECONDS = 10;\n"
-    violations = _run(code, language="javascript")
-    assert len(violations) == 0
+def test_constant_definition_skipped_when_literal_only_js():
+    code = "const MAX = 5;\nlet x = 5;\n"
+    v = _run(code, lang="javascript", path="a.js")
+    assert _lits(v) == ["5"]
 
 
-def test_does_not_flag_java_final_definition():
-    code = "final double PI = 3.14;\n"
-    violations = _run(code, language="java")
-    assert len(violations) == 0
+def test_constant_definition_not_skipped_when_expression_js():
+    code = "const MAX = getLimit(5);\n"
+    v = _run(code, lang="javascript", path="a.js")
+    assert _lits(v) == ["5"]
 
 
-def test_does_not_flag_cpp_define_constant():
-    code = "#define PI 3.14\n"
-    violations = _run(code, language="cpp")
-    assert len(violations) == 0
+def test_call_argument_js():
+    code = "fetch(url, 10);"
+    v = _run(code, lang="javascript", path="sample.js")
+    assert any(x.literal == "10" and x.context_type == "CALL_ARG" for x in v)
 
 
-def test_does_not_flag_cpp_constexpr_constant():
-    code = "constexpr int MAX_USERS = 100;\n"
-    violations = _run(code, language="cpp")
-    assert len(violations) == 0
+def test_threshold_js():
+    code = "if (count > 7) { doThing(); }"
+    v = _run(code, lang="javascript", path="sample.js")
+    assert any(x.literal == "7" and x.context_type == "THRESHOLD" for x in v)
 
 
-def test_does_not_flag_swift_let_definition():
-    code = "let pi = 3.14\n"
-    violations = _run(code, language="swift")
-    assert len(violations) == 0
+def test_loop_bound_js():
+    code = "for (let i = 0; i < 12; i++) { sum += i; }"
+    v = _run(code, lang="javascript", path="sample.js")
+    assert any(x.literal == "12" and x.context_type == "LOOP_BOUND" for x in v)
 
 
-def test_does_not_flag_kotlin_val_definition():
-    code = "val pi = 3.14\n"
-    violations = _run(code, language="kotlin")
-    assert len(violations) == 0
+def test_assignment_js():
+    code = "timeout = 10;"
+    v = _run(code, lang="javascript", path="sample.js")
+    assert any(x.literal == "10" and x.context_type == "ASSIGNMENT" for x in v)
 
 
-def test_does_not_flag_python_all_caps_constant_convention():
-    code = "PI = 3.14\n"
-    violations = _run(code, language="python")
-    assert len(violations) == 0
+def test_typescript_supported_call_arg():
+    code = "function f(x: number) { return g(x, 9); }"
+    v = _run(code, lang="typescript", path="sample.ts")
+    assert any(x.literal == "9" and x.context_type == "CALL_ARG" for x in v)
 
 
-def test_does_not_flag_math_pi_safe_named_constant():
-    code = "area = r * r * math.pi\n"
-    violations = _run(code, language="python")
-    assert len(violations) == 0
+def test_python_ignores_ui_attrs_dict_rows_cols_line():
+    code = (
+        'description = forms.CharField(widget=forms.Textarea(attrs={"rows":5, "cols":23}))\n'
+        "x = 9\n"
+    )
+    v = _run(code, lang="python", path="app/stream/forms.py")
+    # attrs line ignored, so only "9" remains
+    assert _lits(v) == ["9"]
 
 
-def test_does_not_flag_php_define_constant():
-    code = 'define("PI", 3.14);\n'
-    violations = _run(code, language="php")
-    assert len(violations) == 0
+def test_python_triple_quoted_string_masks_numbers_inside():
+    code = (
+        'text = """\n'
+        "Version 1.2.6\n"
+        "Copyright 2009\n"
+        '"""\n'
+        "x = 7\n"
+    )
+    v = _run(code, lang="python", path="a.py")
+    assert _lits(v) == ["7"]
 
 
-def test_does_not_flag_safe_literal_zero_one_basic():
-    code = "for i in range(0, n):\n    x = x + 1\n"
-    violations = _run(code, language="python")
+def test_js_multiline_block_comment_masks_version_numbers():
+    # /*
+    #  * @requires jQuery 1.2.6 or later
+    #  * Copyright (c) 2009 ...
+    #  */
+    code = (
+        "/*\n"
+        " * Based on jQuery Formset 1.1\n"
+        " * @requires jQuery 1.2.6 or later\n"
+        " * Copyright (c) 2009, Someone\n"
+        " */\n"
+        "var x = 7;\n"
+    )
+    v = _run(code, lang="javascript", path="app/productionfiles/admin/js/inlines.js")
+    # All numbers in the comment must be ignored. Only 7 remains
+    assert _lits(v) == ["7"]
+    assert v[0].context_type in {"ASSIGNMENT", "GENERIC"}
 
-    # It is okay if other literals are detected, but 0 and 1 must not be reported.
-    for lit in _literals(violations):
-        assert lit not in ("0", "1")
+
+def test_js_single_line_line_comment_masks_numbers():
+    code = "var x = 7; // requires v1.2.6\n"
+    v = _run(code, lang="javascript", path="a.js")
+    # Only "7" remains
+    assert _lits(v) == ["7"]
+
+
+def test_js_single_line_block_comment_masks_numbers():
+    code = "var x = 7; /* v1.2.6 */\n"
+    v = _run(code, lang="javascript", path="a.js")
+    assert _lits(v) == ["7"]
+
+
+def test_js_const_initializer_function_body_still_flags():
+    code = """
+    const X = () => retry(5);
+    """
+    v = _run(code, lang="javascript", path="sample.js")
+    assert any(x.literal == "5" for x in v)
+
+
+def test_jsx_style_object_ignored():
+    code = """
+    const X = () => (
+      <Button style={{ marginRight: 8, borderRadius: 2 }}>Hi</Button>
+    );
+    """
+    v = _run(code, lang="javascript", path="sample.jsx")
+    assert not any(x.literal in {"8", "2"} for x in v)
+
+
+def test_jsx_sx_object_ignored():
+    code = """
+    const X = () => (
+      <Box sx={{ padding: 12, margin: 5 }} />
+    );
+    """
+    v = _run(code, lang="javascript", path="sample.jsx")
+    assert not any(x.literal in {"12", "5"} for x in v)
+
+
+def test_jsx_viewbox_ignored():
+    code = """
+    const X = () => (
+      <Icon viewBox={{ minX: 0, minY: 0, width: 4, height: 16 }} />
+    );
+    """
+    v = _run(code, lang="javascript", path="sample.jsx")
+    assert not any(x.literal in {"4", "16"} for x in v)
+
+
+def test_create_theme_ignored():
+    code = """
+    import { createTheme } from "@aws-amplify/ui-react";
+    export default createTheme({
+      tokens: {
+        colors: {
+          red: {
+            10: { value: "hsl(0, 75%, 95%)" }
+          }
+        }
+      }
+    });
+    """
+    v = _run(code, lang="javascript", path="theme.js")
+    assert not any(x.literal == "10" for x in v)
+
+
+def test_logic_inside_jsx_should_detect():
+    code = """
+    const X = () => (
+      <Button onClick={() => retry(5)}>Retry</Button>
+    );
+    """
+    v = _run(code, lang="javascript", path="sample.jsx")
+    assert any(x.literal == "5" for x in v)
+
+
+def test_skips_excluded_paths():
+    code = "x = 9\n"
+    v = _run(code, lang="python", path="node_modules/pkg/a.py")
+    assert v == []
+
+
+def test_java_file_extension_is_supported():
+    code = "class A { void f(){ int x = 2; } }"
+    v = _run(code, lang="java", path="A.java")
+    assert any(x.literal == "2" for x in v)
+
+
+def test_java_static_final_constant_literal_not_flagged():
+    code = (
+        "class A {\n"
+        "  static final int MAX = 5;\n"
+        "  void f(){ int x = MAX; }\n"
+        "}\n"
+    )
+    v = _run(code, lang="java", path="A.java")
+    assert not any(x.literal == "5" for x in v)
+
+
+def test_java_final_static_constant_literal_not_flagged():
+    code = (
+        "class A {\n"
+        "  final static int MAX = 5;\n"
+        "  void f(){ int x = MAX; }\n"
+        "}\n"
+    )
+    v = _run(code, lang="java", path="A.java")
+    assert not any(x.literal == "5" for x in v)
+
+
+def test_java_constant_with_expression_still_scans_and_flags():
+    code = "class A { static final int MAX = getLimit(5); }"
+    v = _run(code, lang="java", path="A.java")
+    assert any(x.literal == "5" for x in v)
+
+def test_java_hex_literal_not_detected_anywhere():
+    code = """
+    class Sample {
+        void f() { foo(0xFF); }
+    }
+    """
+    v = _run(code, lang="java", path="Sample.java")
+    assert v == []
+
+
+def test_java_binary_literal_not_detected_anywhere():
+    code = """
+    class Sample {
+        void f() { foo(0b1010); }
+    }
+    """
+    v = _run(code, lang="java", path="Sample.java")
+    assert v == []

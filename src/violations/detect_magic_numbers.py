@@ -1,26 +1,103 @@
 """
-Magic Number detector
+Magic Number Detector
+=====================
 
-Magic Number is a numeric literal value that appear in code (hard-coding parameters)
- without an explanatory name (a constant) and inside meaningful program logic.
+Definition
+----------
+A magic number is a numeric literal embedded directly in source code
+without an explanatory constant name, especially when used within
+meaningful program logic.
 
-Example of Magic Number and their classifications:
-1. x = request.get(url, 10) -> CALL_ARG (a numeric literal used as a function or method argument)
-2. if (strlen(pw) > 7) -> THRESHOLD (a numeric literal used in a comparison expression)
-3. for i in range(12) -> LOOP BOUND (a numeric literal used to control loop iteration bounds)
-4. timeout = 10 -> ASSIGNMENT (a numeric literal assigned directly to a variable)
+Scope
+-----
+This detector analyzes the following languages:
+
+    - JavaScript (.js, .jsx)
+    - TypeScript (.ts, .tsx)
+    - Python (.py)
+    - Java (.java)
+
+It identifies numeric literals that appear in logical program contexts,
+including:
+
+    • Function or method arguments      → retry(5)
+    • Conditional thresholds            → if (count > 7)
+    • Loop bounds                       → for (i < 10)
+    • Direct variable assignments       → timeout = 30
+
+What Is Ignored
+--------------------------
+
+1) Literal constant definitions:
+    - JS/TS:   const MAX = 5;
+    - Python:  MAX_RETRY = 5
+    - Java:    static final int MAX = 5;
+
+   Only literal RHS values are skipped.
+   Expressions such as `const X = getLimit(5)` are still analyzed.
+
+2) Formatting / presentation numbers:
+    - JSX style or sx props
+    - UI layout props (width, height, margin, etc.)
+    - CSS declarations (margin: 12px;)
+    - Values with CSS units (12px, 2rem, 50%)
+    - Styling/theme blocks (createTheme, makeStyles)
+    - Python UI attribute dictionaries ({"rows": 5})
+
+3) Strings and comments:
+    - Single/double/template strings
+    - Python triple-quoted strings
+    - Line comments (//, #)
+    - Block comments (/* ... */)
+    - JS regex literals (/pattern/)
+
+4) Non-project or generated code:
+    - node_modules, site-packages, dist, build, vendor, etc.
+    - Minified files
+
+5) Safe literals:
+    - 0 and 1 are not flagged by default.
+
+Methodological Notes
+--------------------
+This detector use heuristic approach (regex + contextual rules).
+The goal is to identify magic numbers in logical contexts while
+minimizing false positives from formatting or presentation code.
+
 """
 
 from __future__ import annotations
 
-import re
-import bisect
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Dict, List, Sequence, Union
 
-from src.violations.rules import get_rule 
+from src.violations.magic_number_config import (
+    ALLOWED_LANGS,
+    RULES,
+    SAFE_LITERALS,
+    PRESENTATION_PROP_NAMES,
+)
+from src.violations.magic_number_literals import NUMERIC_RE, is_literal_only_rhs
+from src.violations.magic_number_masking import sanitize_line
+from src.violations.magic_number_filters import (
+    JSX_PRESENTATION_ATTR_RE,
+    STYLE_CALL_OPEN_RE,
+    is_allowed_file,
+    is_css_like_declaration_line,
+    is_python_ui_attr_dict_line,
+    line_has_css_unit_after_number,
+    line_has_presentation_prop_assign,
+    normalize_language,
+    update_depth,
+)
+from src.violations.magic_number_classify import classify_context
 
-@dataclass
+
+# ============================================================
+# Data model
+# ============================================================
+
+@dataclass(frozen=True)
 class MagicNumberViolation:
     pr_id: int
     head_sha: str
@@ -43,275 +120,228 @@ class MagicNumberViolation:
             "snippet": self.snippet,
         }
 
-# Detect numeric literals
-NUM_LITERAL_RE = re.compile(r"\b\d+(?:\.\d+)?\b")
 
-# Detect known safe literals
-SAFE_NAME_TOKENS = ("math.pi", "Math.PI", "MATH.PI")    # They are already named and standardized.
-SAFE_LITERALS = {"0", "1"}
+# ============================================================
+# Constant definition detection
+# ============================================================
 
-# Detect constant definition, skip entire line if it defines a constant
-# 1) "const ...":
-# JS/TS:    const PI = 3.14;
-# Go:       const Pi = 3.14
-# C#:       const double PI = 3.14;
-# Rust:     const PI: f64 = 3.14;
-# Kotlin:   const val PI = 3.14;
-# Ruby:     PI = 3.14  (handled by PY_ALL_CAPS... instead)
-CONST_DEF_RE = re.compile(
-    r"""^\s*
-        const
-        (?:\s+val)?                 # Kotlin: const val
-        (?:\s+[A-Za-z_][\w<>:\[\]]*)?  # optional (C#/Go/TS-ish)
-        \s+[A-Za-z_$][\w$]*         # constant name
-        (?:\s*:\s*[\w<>:\[\]]+)?    # Rust/TS type annotation after name
-        \s*=\s*.+                   # assignment
-    """,
-    re.VERBOSE,
+import re
+from typing import Optional, Tuple
+
+# JS/TS: const NAME = <rhs>
+RX_JS_CONST_DEF = r"^\s*const\s+([A-Za-z_$][\w$]*)\s*=\s*(.+?);?\s*$"
+JS_CONST_RE = re.compile(RX_JS_CONST_DEF)
+
+# Python: UPPER_SNAKE_CASE = <rhs>
+RX_PY_CONST_DEF = r"^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.+?)\s*$"
+PY_CONST_RE = re.compile(RX_PY_CONST_DEF)
+
+# Java: (public/protected/private)? static final TYPE NAME = <rhs>;
+RX_JAVA_CONST_DEF = (
+    r"^\s*"
+    r"(?:(?:public|protected|private)\s+)?"
+    r"(?:static\s+final|final\s+static)\s+"
+    r"(?:[\w$<>\[\], ?]+)\s+"          
+    r"([A-Z_][A-Z0-9_]*)\s*=\s*"       
+    r"(.+?)\s*;\s*$"                  
 )
-
-# 2) "final ...":
-# Java:     final double PI = 3.14;
-# Kotlin:   final val x = ...  (rare; Kotlin uses val, but "final" exists)
-FINAL_DEF_RE = re.compile(
-    r"""^\s*
-        (?:public|private|protected)?\s*   # optional access modifier
-        (?:static\s+)?                    # optional static
-        final
-        \s+[\w<>:\[\]]+                   # type token (double, int, List<T>, etc.)
-        \s+[A-Za-z_$][\w$]*               # name
-        \s*=\s*.+                         # assignment
-    """,
-    re.VERBOSE,
-)
-
-# 3) C/C++ preprocessor define:
-# #define PI 3.14
-CPP_DEF_RE = re.compile(
-    r"""^\s*
-        \#define
-        \s+[A-Za-z_]\w*
-        \s+.+                   # value
-    """,
-    re.VERBOSE,
-)
-
-# 4) C++ constexpr:
-# constexpr int MAX_USERS = 100;
-CONSTEXPR_DEF_RE = re.compile(
-    r"""^\s*
-        (?:inline\s+)?          # optional inline
-        constexpr
-        \s+[\w<>:\[\]]+         # type
-        \s+[A-Za-z_]\w*         # name
-        \s*=\s*.+               # assignment
-    """,
-    re.VERBOSE,
-)
-
-# 5) Python/Ruby convention:
-# MAX_PASSWORD_LENGTH = 7
-ALL_CAPS_CONST_DEF_RE = re.compile(r"^\s*[A-Z][A-Z0-9_]*\s*=\s*.+") 
-
-# 6) PHP define("PI", 3.14);
-PHP_DEFINE_CONST_DEF_RE = re.compile(
-    r"^\s*define\s*\(\s*['\"][^'\"]+['\"]\s*,\s*.+\)\s*;?\s*$"
-)
-
-# 7) Swift let:
-# let pi = 3.14
-# let MAX_USERS: Int = 100
-LET_DEF_RE = re.compile(
-    r"""^\s*
-        let
-        \s+[A-Za-z_]\w*                 # name
-        (?:\s*:\s*[\w<>\[\]:]+)?        # optional type annotation
-        \s*=\s*.+                       # assignment
-    """,
-    re.VERBOSE,
-)
-
-# 8) Kotlin val:
-# val pi = 3.14
-# val MAX_USERS: Int = 100
-VAL_DEF_RE = re.compile(
-    r"""^\s*
-        (?:private|public|protected|internal)?\s*   # optional visibility
-        (?:lateinit\s+)?                           
-        val
-        \s+[A-Za-z_]\w*                            # name
-        (?:\s*:\s*[\w<>\[\]:]+)?                   # optional type annotation
-        \s*=\s*.+                                  # assignment
-    """,
-    re.VERBOSE,
-)
-
-CONST_DEF_PATTERNS = (
-    CONST_DEF_RE,
-    FINAL_DEF_RE,
-    CPP_DEF_RE,
-    CONSTEXPR_DEF_RE,
-    ALL_CAPS_CONST_DEF_RE,
-    PHP_DEFINE_CONST_DEF_RE,
-    LET_DEF_RE,
-    VAL_DEF_RE,
-)
-
-# Tokens can appear like "identifier(" but are NOT function calls.
-# Exclude them to avoid misclassification:
-#   if (x > 37)      as CALL_ARG (callee "if") -> Should be THRESHOLD
-NON_CALL_KEYWORDS = {"if", "for", "while", "switch", "return", "catch"}
+JAVA_CONST_RE = re.compile(RX_JAVA_CONST_DEF)
 
 
-def detect_magic_numbers(code: Union[str, Sequence[str]], *, language: str = "generic") -> List[MagicNumberViolation]:
+def _extract_const_rhs(lang: str, line_sanitized: str) -> Optional[Tuple[str, str]]:
     """
-    Detect magic numbers in a code.
+    Extract (NAME, RHS) from constant definition lines.
 
-    Args:
-        Code: Code as a single string or list of lines
-
-    Returns:
-        List[MagicNumberViolation]
+    Returns None if not a constant definition.
     """
+    if lang in {"javascript", "typescript"}:
+        m = JS_CONST_RE.match(line_sanitized)
+        if not m:
+            return None
+        return m.group(1), m.group(2).strip()
 
-    text = "\n".join(code) if not isinstance(code, str) else code
+    if lang == "python":
+        m = PY_CONST_RE.match(line_sanitized)
+        if not m:
+            return None
+        return m.group(1), m.group(2).strip()
 
-    lines, line_starts = _split_lines_with_starts(text)
-    skip_line = _build_skip_line_flags(lines)
+    if lang == "java":
+        m = JAVA_CONST_RE.match(line_sanitized)
+        if not m:
+            return None
+        return m.group(1), m.group(2).strip()
 
+    return None
+
+
+# ============================================================
+# Main detection function
+# ============================================================
+
+def detect_magic_numbers(
+    code: Union[str, Sequence[str]],
+    *,
+    language: str = "generic",
+    file_path: str = "<inline>",
+    pr_id: int = 0,
+    head_sha: str = "",
+) -> List[MagicNumberViolation]:
+    """
+    Heuristic magic number detector.
+
+    Scope:
+      - Scans JavaScript, TypeScript, Python, Java files
+      - Returns empty list for other languages/non-matching paths
+
+    What we ignore:
+      - Strings and comments 
+      - JS/TS regex literals /.../ 
+      - Multi-line block comments /* ... */ 
+      - CSS declarations with units (margin: 12px;)
+      - JSX presentation props (style/sx/viewBox/width/height/etc.)
+      - Styling function blocks (createTheme/makeStyles)
+      - Python UI attribute dicts ({"rows": 5, "cols": 23})
+      - CLI/config command strings ("-blur 0x8 -resize ...")
+
+    Constant handling:
+      - JS/TS: skips "const NAME = <literal>" (literal-only RHS)
+      - Python: skips "UPPER_SNAKE = <literal>" (literal-only RHS)
+      - Java: skips "(access)? (static final|final static) TYPE NAME = <literal>;" (literal-only RHS)
+      - Does NOT skip expressions like:
+          const MAX = getLimit(5);          <- still scanned
+          LIMIT = calculate(10);            <- still scanned
+          static final int X = get(5);      <- still scanned
+
+    Python:
+      - Handles triple quoted strings with simple on/off toggle
+      - Masks entire line while inside triple quoted region
+    """
+    # Determine language
+    lang = normalize_language(language, file_path)
+
+    # Early exit if language not supported
+    if lang not in ALLOWED_LANGS:
+        return []
+
+    # Convert to string if needed
+    source = "\n".join(code) if not isinstance(code, str) else code
+
+    # Filter out excluded/minified files
+    if file_path != "<inline>" and not is_allowed_file(file_path, source):
+        return []
+
+    lines = source.splitlines()
     violations: List[MagicNumberViolation] = []
 
-    for m in NUM_LITERAL_RE.finditer(text):
+    # State tracking for JS/TS ignore regions
+    in_style_call: bool = False
+    style_paren_depth: int = 0
+    style_brace_depth: int = 0
 
-        literal = m.group(0)
+    in_jsx_presentation_obj: bool = False
+    jsx_brace_depth: int = 0
 
-        if literal in SAFE_LITERALS:
-            continue
+    # State tracking for Python triple quoted strings
+    in_py_triple_string: bool = False
+    py_triple_delim: str = ""
 
-        line_idx = _line_index_from_pos(line_starts, m.start())
-        if line_idx < 0 or line_idx >= len(lines):
-            continue
+    # State tracking for C style block comments
+    in_c_block_comment: bool = False
 
-        if skip_line[line_idx]:
-            continue
-
-        line_text = lines[line_idx]
-        col = (m.start() - line_starts[line_idx]) + 1
-
-        context_type = _classify_context(
-            line_text,
-            m.start() - line_starts[line_idx],
-            m.end() - line_starts[line_idx],
+    # Process each line
+    for i, original_line in enumerate(lines, start=1):
+        line_sanitized, in_py_triple_string, py_triple_delim, in_c_block_comment = sanitize_line(
+            original_line,
+            lang=lang,
+            in_py_triple_string=in_py_triple_string,
+            triple_delim=py_triple_delim,
+            in_c_block_comment=in_c_block_comment,
         )
 
-        get_rule(context_type)
 
-        violations.append(
-            MagicNumberViolation(
-                pr_id=0,
-                head_sha="",
-                file_path="<inline>",
-                line=line_idx + 1,
-                col=col,
-                literal=literal,
-                context_type=context_type,
-                snippet=line_text,
+        # Skip CSS formatting lines
+        if is_css_like_declaration_line(line_sanitized):
+            continue
+
+        # Python: skip UI attribute dicts
+        if lang == "python":
+            if is_python_ui_attr_dict_line(original_line):
+                continue
+
+        # JS/TS: skip lines with presentation prop assignments
+        if lang in {"javascript", "typescript"}:
+            if line_has_presentation_prop_assign(line_sanitized):
+                continue
+
+        # JS/TS: Track multi line JSX presentation object regions
+        # Example: style={{ ... }} spanning multiple lines
+        if lang in {"javascript", "typescript"}:
+            if not in_jsx_presentation_obj:
+                m_attr = JSX_PRESENTATION_ATTR_RE.search(line_sanitized)
+                if m_attr and m_attr.group(1) in PRESENTATION_PROP_NAMES:
+                    in_jsx_presentation_obj = True
+                    jsx_brace_depth = 0
+
+            if in_jsx_presentation_obj:
+                jsx_brace_depth = update_depth(line_sanitized, jsx_brace_depth, "{", "}")
+                if jsx_brace_depth <= 0 and "}" in original_line:
+                    in_jsx_presentation_obj = False
+                continue  # Skip this line
+
+        # JS/TS: Track createTheme/makeStyles ignore regions
+        if lang in {"javascript", "typescript"}:
+            if not in_style_call and STYLE_CALL_OPEN_RE.search(line_sanitized):
+                in_style_call = True
+                style_paren_depth = 0
+                style_brace_depth = 0
+
+            if in_style_call:
+                style_paren_depth = update_depth(line_sanitized, style_paren_depth, "(", ")")
+                style_brace_depth = update_depth(line_sanitized, style_brace_depth, "{", "}")
+
+                if style_paren_depth <= 0 and style_brace_depth <= 0 and ")" in line_sanitized:
+                    in_style_call = False
+
+                if in_style_call:
+                    continue  # Skip this line
+
+        # Skip constant definitions with literal only RHS
+        const_info = _extract_const_rhs(lang, line_sanitized)
+        if const_info is not None:
+            _, rhs = const_info
+            if is_literal_only_rhs(rhs):
+                continue  # Skip this constant definition
+
+        # Detect numeric literals on this line
+        for m in NUMERIC_RE.finditer(line_sanitized):
+            lit = m.group(0)
+
+            # Skip safe literals (0 and 1)
+            if lit in SAFE_LITERALS:
+                continue
+
+            # Skip numbers with CSS units (formatting)
+            if line_has_css_unit_after_number(line_sanitized, m.end()):
+                continue
+
+            # Classify the context
+            context_type = classify_context(lang, line_sanitized, (m.start(), m.end()))
+            if context_type not in RULES:
+                context_type = "GENERIC"
+
+            # Create violation record
+            violations.append(
+                MagicNumberViolation(
+                    pr_id=pr_id,
+                    head_sha=head_sha,
+                    file_path=file_path,
+                    line=i,
+                    col=m.start() + 1,  # Convert to 1-based column
+                    literal=lit,
+                    context_type=context_type,
+                    snippet=original_line,
+                )
             )
-        )
 
     return violations
-
-
-def _classify_context(line: str, lit_start: int, lit_end: int) -> str:
-    """
-    Context classifier:
-    - LOOP_BOUND: inside range(...)
-    - THRESHOLD: part of a comparison expression (> < >= <= == !=)
-    - CALL_ARG: inside parentheses of a call-like expression
-    - ASSIGNMENT: assigned directly to a variable
-    - GENERIC: fallback
-    """
-
-    # 1) LOOP_BOUND: range( ... literal ... )
-    range_pos = line.find("range(")
-    if range_pos != -1:
-        # If literal occurs after 'range(' and before next ')', treat as loop bound
-        close = line.find(")", range_pos)
-        if close != -1 and range_pos < lit_start < close:
-            return "LOOP_BOUND"
-
-    # 2) THRESHOLD: comparisons around literal
-    # Check either: <op> literal  OR  literal <op>
-    left = line[:lit_start]
-    right = line[lit_end:]
-    if re.search(r"(<=|>=|==|!=|<|>)\s*$", left) or re.search(r"^\s*(<=|>=|==|!=|<|>)", right):
-        return "THRESHOLD"
-
-    # 3) CALL_ARG: look for a call-like token name(...) where literal is inside (...)
-    # Find the nearest '(' before the literal and see if it belongs to a non-keyword identifier.
-    open_paren = line.rfind("(", 0, lit_start)
-    close_paren = line.find(")", lit_end)
-    if open_paren != -1 and close_paren != -1 and open_paren < lit_start < close_paren:
-        # Grab the token before '('
-        prefix = line[:open_paren]
-        m = re.search(r"([A-Za-z_]\w*)\s*$", prefix)
-        if m:
-            callee = m.group(1)
-            if callee not in NON_CALL_KEYWORDS:
-                return "CALL_ARG"
-    
-    # 4) ASSIGNMENT: literal on right side of '=' (not comparison)
-    eq_pos = line.find("=")
-
-    if eq_pos != -1:
-        if not re.search(r"(<=|>=|==|!=)", line):
-            if eq_pos < lit_start:
-                return "ASSIGNMENT"
-
-    return "GENERIC"
-
-# ============================================================
-# HELPERS
-# ============================================================
-
-def _split_lines_with_starts(text: str):
-    lines = text.splitlines()
-    line_starts = []
-
-    pos = 0
-    for line in lines:
-        line_starts.append(pos)
-        pos += len(line) + 1
-
-    return lines, line_starts
-
-
-def _build_skip_line_flags(lines: List[str]) -> List[bool]:
-    skip = []
-
-    for line in lines:
-
-        stripped = line.strip()
-
-        if not stripped:
-            skip.append(True)
-            continue
-
-        if any(tok in line for tok in SAFE_NAME_TOKENS):
-            skip.append(True)
-            continue
-
-        is_const_def = False
-        for pat in CONST_DEF_PATTERNS:
-            if pat.match(line):
-                is_const_def = True
-                break
-
-        skip.append(is_const_def)
-
-    return skip
-
-
-def _line_index_from_pos(line_starts: List[int], pos: int) -> int:
-    return bisect.bisect_right(line_starts, pos) - 1
-
