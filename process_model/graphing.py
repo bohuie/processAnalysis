@@ -79,34 +79,26 @@ def load_event_freq_map(freq_fp: str) -> dict:
     df["event"] = df["event"].astype(str)
     df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0).astype(int)
 
-    out = {}
-    for team, g in df.groupby("team_number"):
-        out[team] = dict(zip(g["event"], g["count"]))
-    return out
+        freq_map = load_event_freq_map(in_freq_fp)
+        sess_count = load_sessions_count_map(in_sess_fp)
+        
+        # Setup output directories scoped by dataset (pr or branching)
+        out_base_dir = os.path.join(ROOT, "data", "outputs", category_label)
+        ensure_dir(out_base_dir)
+        out_teams_dir = out_base_dir
+        out_clusters_dir = os.path.join(out_base_dir, "clusters")
+
+        print(f"[INFO] Rendering team graphs...")
+        render_team_graphs(overall_df, avg_df, freq_map, out_teams_dir, category_label)
+        
+        print(f"[INFO] Rendering cluster graphs...")
+        render_cluster_graphs(zfilt_df, freq_map, sess_count, in_cluster_fp, out_clusters_dir, category_label)
+
+        print(f"[✅ OK] Graphs written to: {out_base_dir}")
 
 
-def load_sessions_count_map(sess_fp: str) -> dict:
-    """
-    Returns: {team_number_str: num_pr_sessions_int}
-    """
-    if not os.path.exists(sess_fp):
-        return {}
-    df = pd.read_csv(sess_fp, low_memory=False)
-    required = {"team_number", "num_pr_sessions"}
-    if not required.issubset(df.columns):
-        return {}
-
-    df = df.copy()
-    df["team_number"] = df["team_number"].apply(_as_str_team)
-    df["num_pr_sessions"] = pd.to_numeric(df["num_pr_sessions"], errors="coerce").fillna(0).astype(int)
-    return dict(zip(df["team_number"], df["num_pr_sessions"]))
-
-
-# ---------- Rendering (same styling as old script) ----------
-def build_markov_graph(user_label, edges_df, event_freq, output_path,
-                       title_suffix="", normalize_probs=True,
-                       teams_in_cluster=None):
-    edges_df = edges_df.copy()
+if __name__ == "__main__":
+    main()
     edges_df = edges_df[edges_df["count"] > 0]
     if edges_df.empty:
         print(f"[WARN] Skipping {user_label} — no edges.")
