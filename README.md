@@ -61,52 +61,41 @@ pip install -r requirements.txt
 
 ### 4. Configure Environment
 
-Create a `.env` file (or edit the existing one) at the repo root. Here's a complete example:
+Create a `.env` file (or edit the existing one) at the repo root. Here's what you need:
 
 ```bash
 # ============================================
-# GITHUB API (REQUIRED)
+# REQUIRED
 # ============================================
 GITHUB_TOKEN=ghp_your_github_token_here
 
 # ============================================
-# AI BACKEND (for Code Structure/PR labeling)
+# OPTIONAL: AI Backend (for LLM labeling)
 # ============================================
-# Choose AI_MODE: 'offline' (local Ollama) or 'online' (Groq API)
+# Choose: 'offline' (local Ollama) or 'online' (Groq Cloud)
+# Default: offline (no API costs, works without internet)
 AI_MODE=offline
 
 # Only needed if AI_MODE=online
 GROQ_API_KEY=gsk_your_groq_api_key_here
-GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional, defaults to this
-
-# ============================================
-# PROCESS MODEL TOGGLE (for graphing pipeline)
-# ============================================
-# IMPORTANT: FILE_SOURCE and FOLDER_SOURCE must be paired correctly!
-# Option A: Branching/Structure analysis
-FILE_SOURCE=branching
-FOLDER_SOURCE=branching
-
-# Option B: PR-label analysis (comment out Option A if using this)
-# FILE_SOURCE=pr_labels
-# FOLDER_SOURCE=pr
+GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional
 ```
 
 **Key Points:**
 - `GITHUB_TOKEN` is **required** for data extraction
-- `AI_MODE` determines which LLM backend to use (see [LLM Setup](#-llm-setup--ai_mode-toggle) section)
-- `FILE_SOURCE` and `FOLDER_SOURCE` work together (see [Process Model Generation](#-process-model-generation-toggle-system) section)
-- You can only have ONE set of FILE_SOURCE/FOLDER_SOURCE active at a time
+- `AI_MODE` controls which LLM backend to use
+- Everything else is automatic
 
 ---
 
-## LLM Setup and AI_MODE Toggle
+### LLM Setup and AI_MODE Toggle
 
 This project uses an **LLM for analyzing code structure and PR communications**. You can choose between:
+
 - **Offline mode** (AI_MODE=offline): Uses local Ollama with `llama3.2:3b`
 - **Online mode** (AI_MODE=online): Uses Groq Cloud API for faster processing
 
-### Choose Your Mode
+#### Choose Your Mode
 
 Set `AI_MODE` in your `.env` file:
 
@@ -117,7 +106,7 @@ AI_MODE=offline    # Use local Ollama (default, no API key needed)
 AI_MODE=online     # Use Groq Cloud API (requires GROQ_API_KEY)
 ```
 
-### Option 1: Offline Mode (AI_MODE=offline) — Local Ollama
+#### Option 1: Offline Mode (AI_MODE=offline) — Local Ollama
 
 **Advantages:** No API costs, works without internet, privacy-friendly
 **Requirements:** More local compute, slower than Groq
@@ -127,22 +116,22 @@ AI_MODE=online     # Use Groq Cloud API (requires GROQ_API_KEY)
 1. **Install Ollama** from [ollama.com/download](https://ollama.com/download)
 
 2. **Pull the model:**
-   ```bash
-   ollama pull llama3.2:3b
-   ```
+  ```bash
+  ollama pull llama3.2:3b
+  ```
 
 3. **Start the Ollama server** (keep running in background):
-   ```bash
-   ollama serve
-   ```
-   The server will listen on `http://localhost:11434` by default.
+  ```bash
+  ollama serve
+  ```
+  The server will listen on `http://localhost:11434` by default.
 
 4. **Set in .env:**
-   ```bash
-   AI_MODE=offline
-   ```
+  ```bash
+  AI_MODE=offline
+  ```
 
-### Option 2: Online Mode (AI_MODE=online) — Groq Cloud API
+#### Option 2: Online Mode (AI_MODE=online) — Groq Cloud API
 
 **Advantages:** Faster processing, lower local resource usage
 **Requirements:** Groq API key, internet connection, may have API costs
@@ -152,18 +141,18 @@ AI_MODE=online     # Use Groq Cloud API (requires GROQ_API_KEY)
 1. **Create a Groq account** at [console.groq.com](https://console.groq.com)
 
 2. **Generate an API key:**
-   - Go to [console.groq.com/keys](https://console.groq.com/keys)
-   - Click "Create API Key"
-   - Copy the key
+  - Go to [console.groq.com/keys](https://console.groq.com/keys)
+  - Click "Create API Key"
+  - Copy the key
 
 3. **Add to .env:**
-   ```bash
-   AI_MODE=online
-   GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional, this is the default
-   ```
+  ```bash
+  AI_MODE=online
+  GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional, this is the default
+  ```
 
-### Where AI_MODE is Used
+#### Where AI_MODE is Used
 
 The `AI_MODE` toggle is used in:
 - **Event Labelling → CodeStructure_Branching**: When running `python -m event_labelling.CodeStructure_Branching.main`
@@ -172,184 +161,138 @@ The `AI_MODE` toggle is used in:
 
 ---
 
-## How to Run
+## Architecture & How It Works
 
-Below is the **recommended execution order**:
+### Data Flow Overview
 
-### 1. Data Collection  
-Run `app.py` to pull data for selected repositories.
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 1: Data Extraction (GitHub API)                             │
+│ scripts/app.py → Fetch PR metadata, commits, reviews            │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │ Output: data/csv/year-long-project-team-*/
+                       ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 2a: Branching Analysis (LLM)                               │
+│ event_labelling/CodeStructure_Branching/main.py                 │
+│ → Label branch patterns, feature sizes, refactoring             │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │ Output: data/graph_labels/clean/
+                       ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 2b: PR Communications Analysis (LLM)                       │
+│ event_labelling/PR/pr_label.py                                  │
+│ → Analyze reviews, descriptions, communication patterns         │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │ Output: data/csv/CLEAN_pr_labels_*.csv
+         ┌─────────────┴─────────────┐
+         ↓                           ↓
+    BRANCHING DATA            PR LABELS DATA
+    (analyzed separately)     (analyzed separately)
+    
+         ↓                           ↓
+┌─────────────────────────────────────────────────────────────────┐
+│ STEP 3: Process Model Analysis (BOTH DATASETS)                  │
+│ Runs 4 substeps for branching AND pr_labels automatically       │
+│                                                                 │
+│ 3.1: transition_edges.py   → Build state transitions            │
+│ 3.2: zscore_calculation.py → Normalize counts                   │
+│ 3.3: clustering.py         → Find similar teams                 │
+│ 3.4: graphing.py           → Visualize patterns                 │
+└──────────────────────┬──────────────────────────────────────────┘
+         ┌─────────────┴─────────────┐
+         ↓                           ↓
+    data/outputs/              data/outputs/
+    branching/                 pr/
+```
+
+### What Each Step Does
+
+1. **Data Extraction** — Fetches raw PR data from GitHub
+2. **Branching Labeling** — Uses LLM to categorize branch strategies and code patterns
+3. **PR Labeling** — Uses LLM to analyze communication quality and review patterns
+4. **Process Modeling** — Analyzes workflow transitions for both datasets:
+   - Builds Markov chains: which events follow which
+   - Normalizes to find anomalies (z-scores)
+   - Clusters teams by similarity
+   - Visualizes patterns as graphs
+
+
+### 5. Run the Pipeline (main.py)
+
+The project provides a complete end-to-end pipeline with **zero environment variable configuration needed** (except `GITHUB_TOKEN` and `AI_MODE`).
+
+#### Run Everything at Once
+
+```bash
+# Just run main.py - it handles everything!
+python main.py
+```
+
+That's it. `main.py` automatically:
+1. ✅ Extracts PR data from repositories
+2. ✅ Labels branching patterns and code structure
+3. ✅ Labels PR communications and review patterns
+4. ✅ **Processes BOTH branching AND pr_labels datasets simultaneously**
+5. ✅ Generates graphs and analysis for both datasets
+
+**Output locations:**
+- Branching analysis: `data/outputs/branching/`
+- PR analysis: `data/outputs/pr/`
+
+#### The Modular Way: Run Steps Individually
+
+If you prefer to run steps separately:
+
+#### Step 1: Data Extraction
 ```bash
 python scripts/app.py
 ```
-NOTE: Before running, open [scripts/app.py](scripts/app.py) and set:
-- `REPO_OWNER` (string)
-- `ORG_NAME` (string or empty)
-- `REPOSITORIES` (list of repo names)
+**What it does:** Fetches PR metadata, commits, comments from GitHub repos
+**Output:** `data/csv/year-long-project-team-*/`
 
-### 2. Labeling
-Run from the repo root after extraction:
+#### Step 2a: Code Structure & Branching Analysis
 ```bash
-# PR labeling
-python -m event_labelling.PR.pr_label
-
-# Code Structure and Branching labeling
 python -m event_labelling.CodeStructure_Branching.main
 ```
-Outputs land in `data/csv/<team>/...` (same folders generated by app.py). If files are missing, the scripts skip that team with a warning.
+**What it does:** Uses LLM (Ollama or Groq) to label branch names, feature sizes, refactoring patterns
+**Output:** `data/graph_labels/clean/CLEAN_*_branching_and_structure.csv`
 
-### 3. Process Model Generation (Toggle System)
-
-** Critical:** The process model pipeline uses **two paired environment variables** that control which dataset to process. You can only run **one mode at a time** (branching OR pr_labels).
-
-#### Understanding the Toggle System
-
-Two environment variables work together to switch between dataset sources:
-
-| Variable | Purpose | Possible Values |
-|----------|---------|-----------------|
-| `FILE_SOURCE` | Controls which **input files** are read (used by `transition_edges.py`) | `branching` or `pr_labels` |
-| `FOLDER_SOURCE` | Controls which **output folder** is used (used by all other process_model scripts) | `branching` or `pr` |
-
-**Critical Rule:** `FILE_SOURCE` and `FOLDER_SOURCE` must be paired correctly:
-- If `FILE_SOURCE=branching` → must have `FOLDER_SOURCE=branching`
-- If `FILE_SOURCE=pr_labels` → must have `FOLDER_SOURCE=pr`
-
-#### How the Toggle Works
-
-**FILE_SOURCE determines the data source:**
-- `FILE_SOURCE=branching`: reads from `data/graph_labels/clean/CLEAN_year-long-project-team-*_labels_branching_and_structure.csv`
-- `FILE_SOURCE=pr_labels`: reads from `data/csv/CLEAN_pr_labels_year-long-project-team-*.csv`
-
-**FOLDER_SOURCE determines the output location:**
-- `FOLDER_SOURCE=branching`: writes to and reads from `data/outputs/branching/`
-- `FOLDER_SOURCE=pr`: writes to and reads from `data/outputs/pr/`
-
-#### Running the Pipeline
-
-**Mode 1: Generate Branching/Structure Process Models**
+#### Step 2b: PR Communications Analysis
 ```bash
-# Update .env file
-echo "FILE_SOURCE=branching" >> .env
-echo "FOLDER_SOURCE=branching" >> .env
+python -m event_labelling.PR.pr_label
+```
+**What it does:** Analyzes PR descriptions, reviews, and communication patterns
+**Output:** `data/csv/pr_communications_labels_*.csv` + `data/csv/CLEAN_pr_labels_*.csv`
 
-# Or set them directly in terminal
-export FILE_SOURCE=branching
-export FOLDER_SOURCE=branching
-
-# Run the 4-step pipeline in order (do NOT skip steps)
-python -m process_model.transition_edges
-python -m process_model.zscore_calculation
-python -m process_model.clustering
-python -m process_model.graphing
+#### Step 3: Process Model Analysis (Automatic for Both Datasets)
+```bash
+# Run the 4-step pipeline - it processes both branching AND pr_labels automatically
+python -m process_model.transition_edges      # Compute state transitions
+python -m process_model.zscore_calculation    # Normalize transition counts
+python -m process_model.clustering            # Identify behavior clusters
+python -m process_model.graphing              # Generate visualization graphs
 ```
 
-**Mode 2: Generate PR-Label Process Models**
-```bash
-# Update .env file
-echo "FILE_SOURCE=pr_labels" >> .env
-echo "FOLDER_SOURCE=pr" >> .env
+**What it does:** 
+- Analyzes workflow patterns (state transitions between PR events)
+- Computes z-scores to identify anomalies
+- Clusters teams by similar behaviors
+- Generates Graphviz visualizations
 
-# Or set them directly in terminal
-export FILE_SOURCE=pr_labels
-export FOLDER_SOURCE=pr
+**Output locations:**
+- `data/outputs/branching/` - branching-based analysis
+- `data/outputs/pr/` - PR-communication-based analysis
 
-# Run the 4-step pipeline in order (do NOT skip steps)
-python -m process_model.transition_edges
-python -m process_model.zscore_calculation
-python -m process_model.clustering
-python -m process_model.graphing
-```
-
-**Important Notes:**
-- Run the 4 scripts in the exact order shown (transition_edges → zscore_calculation → clustering → graphing)
-- Do NOT mix modes in a single run (all 4 scripts must use the same FILE_SOURCE + FOLDER_SOURCE pair)
-- Output graphs and CSVs are saved to `data/outputs/{branching|pr}/`
-- If you switch modes, the previous mode's outputs remain in their respective folder
-
-### 6. Statistical Analysis (Optional)  
-To get general repository statistics run the project-level analysis script from the repo root:
-```bash
-python -m analysis
-```
+Each directory contains:
+- `team_transition_edges_overall.csv` - All transitions (aggregated)
+- `team_transition_edges_avg_session.csv` - Averaged per PR session
+- `team_transition_edges_avg_session_zscores.csv` - Normalized scores
+- `behavior_clusters_[branching|pr].csv` - Cluster assignments
+- `graphs/` - PNG visualizations per team and cluster
 
 ---
 
-## Quick Reference: Common Tasks
-
-### "I haven't run anything yet" — Complete Setup & First Run
-
-```bash
-# 1. Set up environment
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 2. Create .env with your GitHub token
-echo "GITHUB_TOKEN=ghp_your_token" > .env
-echo "AI_MODE=offline" >> .env
-
-# 3. (Optional) Start Ollama if using offline mode
-ollama serve &
-
-# 4. Extract data
-python scripts/app.py
-
-# 5. Label the data
-python -m event_labelling.PR.pr_label
-python -m event_labelling.CodeStructure_Branching.main
-
-# 6. (Optional) Generate process models
-echo "FILE_SOURCE=branching" >> .env
-echo "FOLDER_SOURCE=branching" >> .env
-python -m process_model.transition_edges
-python -m process_model.zscore_calculation
-python -m process_model.clustering
-python -m process_model.graphing
-```
-
-### "I want to switch from Ollama to Groq" — Enable Online Mode
-
-```bash
-# 1. Get your Groq API key from console.groq.com/keys
-# 2. Update .env
-echo "AI_MODE=online" > .env
-echo "GROQ_API_KEY=gsk_xxxx" >> .env
-
-# 3. Re-run labeling scripts
-python -m event_labelling.CodeStructure_Branching.main
-```
-
-### "I want to switch from Branching to PR analysis" — Toggle Process Models
-
-```bash
-# 1. Update .env
-echo "FILE_SOURCE=pr_labels" > .env
-echo "FOLDER_SOURCE=pr" >> .env
-
-# 2. Re-run the entire 4-step pipeline
-python -m process_model.transition_edges
-python -m process_model.zscore_calculation
-python -m process_model.clustering
-python -m process_model.graphing
-```
-
-### "My Ollama server isn't working" — Debug
-
-```bash
-# Check if Ollama is running
-curl http://localhost:11434/api/tags
-
-# If not, start it
-ollama serve
-
-# Check if model is installed
-ollama list
-
-# If not, pull it
-ollama pull llama3.2:3b
-```
-
----
 
 ## Environment Variables Reference
 
@@ -369,86 +312,7 @@ This is the **complete list** of all environment variables used by the project. 
 | `GROQ_API_KEY` | Groq Cloud API key (only needed if `AI_MODE=online`) | API key from console.groq.com | (empty) |
 | `GROQ_MODEL_NAME` | Which Groq model to use | `llama-3.1-8b-instant`, `mixtral-8x7b-32768`, etc. | `llama-3.1-8b-instant` |
 
-### Process Model Variables (Must be paired)
 
-| Variable | Purpose | Options | Pairing Rule |
-|----------|---------|---------|--------------|
-| `FILE_SOURCE` | Input data source for `transition_edges.py` | `branching` or `pr_labels` | Must match `FOLDER_SOURCE` |
-| `FOLDER_SOURCE` | Output folder for all process_model scripts | `branching` or `pr` | Must match `FILE_SOURCE` |
-
-**Pairing Examples:**
-```bash
-# Valid: Branching mode
-FILE_SOURCE=branching
-FOLDER_SOURCE=branching
-
-# Valid: PR mode
-FILE_SOURCE=pr_labels
-FOLDER_SOURCE=pr
-
-# INVALID: Mismatched (don't do this!)
-FILE_SOURCE=branching
-FOLDER_SOURCE=pr  # INVALID - Don't do this!
-```
-
----
-
-## Utility Modules
-
-### Bot Filter (`src/utils/botFilter.py`)
-
-A reusable utility module for identifying and removing automated bot accounts from GitHub data. This utility is critical for ensuring analysis metrics reflect genuine human collaboration, not bot activity.
-
-**What It Does:**
-- Detects common bot patterns (dependabot, renovate, GitHub Actions, Codecov, etc.)
-- Removes bot accounts from any DataFrame column containing usernames
-- Works with multiple username columns (author, reviewer, merged_by, etc.)
-- Provides custom pattern support for organization-specific bots
-- Logs filtering statistics for transparency
-
-**Why You Need It:**
-GitHub repos contain noise from dependency bots, CI/CD automation, and security scanners. These skew collaboration metrics. This utility filters them out so your analysis focuses on **real team activity**.
-
-**Quick Example:**
-```python
-from src.utils.botFilter import remove_bot_prs, filter_bots_from_multiple_columns
-import pandas as pd
-
-# Load PR data
-prs_df = pd.read_csv('data/prs.csv')  # 1500 records
-
-# Remove bot PRs (uses 'pr_author' column)
-clean_prs = remove_bot_prs(prs_df)
-# Output: [INFO] Filtered out 47 bot records from 1500 total (3.1%)
-
-# Filter multiple columns (author + reviewer)
-clean_prs = filter_bots_from_multiple_columns(
-    clean_prs,
-    username_columns=['pr_author', 'pr_reviewer'],
-    filter_mode='any'
-)
-# Result: 1430 human-only records ready for analysis
-```
-
-**Core Functions:**
-| Function | Purpose |
-|----------|---------|
-| `is_bot_username(username)` | Check if single username is a bot |
-| `filter_bots_from_dataframe(df, username_column)` | Remove bots from one column |
-| `filter_bots_from_multiple_columns(df, columns)` | Remove bots from multiple columns |
-| `get_bot_usernames(df, username_column)` | List all detected bots |
-| `remove_bot_prs(df)` | Shortcut for PR data |
-| `remove_bot_commits(df)` | Shortcut for commit data |
-
-**For Detailed Information:**
-See [documentation/bot_filter.md](documentation/bot_filter.md) for:
-- Complete API reference
-- Real-world workflow examples
-- Custom pattern configuration
-- Troubleshooting guide
-- Performance notes
-
----
 
 ## Output
 
@@ -544,15 +408,55 @@ Then set `ANONYMIZE = True` in the relevant scripts.
 
 ---
 
+
+## Troubleshooting
+
+### "No teams found" during extraction
+```bash
+# Check if repositories exist
+python -c "from src.utils.list_repos import get_org_repositories; \
+print(get_org_repositories('COSC-499-W2023'))"
+
+# Verify GITHUB_TOKEN is set correctly
+echo $GITHUB_TOKEN
+```
+
+### "LLM inference failed" during labeling
+```bash
+# If using offline mode, check Ollama is running
+curl http://localhost:11434/api/tags
+
+# If not, start it
+ollama serve &
+
+# Verify model exists
+ollama list
+```
+
+### "Missing input files" during process_model
+```bash
+# Make sure you ran the labeling step first
+python -m event_labelling.CodeStructure_Branching.main
+python -m event_labelling.PR.pr_label
+
+# Then run process_model
+python -m process_model.transition_edges
+```
+
+### Outputs are incomplete
+- Check `data/outputs/branching/` and `data/outputs/pr/` both have files
+- Both should be populated after running main.py
+- If one is missing, check the console output for errors
+
+---
+
 ## Notes
 
 - **GitHub API Token:** Required for data collection. Set as `GITHUB_TOKEN` environment variable.
 - **Bot Filtering:** Automatically applied during data processing. Customize patterns in `botFilter.py` if needed.
 - **Anonymization:** Update paths in scripts if using anonymized datasets.
 - **Working Directory:** All scripts assume execution from the project root directory.
-- **Ollama Dependency:** Code structure analysis requires a running Ollama server.
-
----
+- **Ollama Dependency:** Code structure analysis requires a running Ollama server (or Groq API key).
 
 ## Testing
 
