@@ -11,17 +11,31 @@ from graphviz import Digraph
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-# Configuration for both datasets
-CONFIGS = {
-    "branching": {
-        "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
-        "category_label": "branching"
-    },
-    "pr": {
-        "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
-        "category_label": "pr"
-    }
-}
+# Determine input/output paths based on FOLDER_SOURCE
+if FOLDER_SOURCE == "branching":
+    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "branching")
+    CATEGORY_LABEL = "branching"
+    print("[CONFIG] Processing branching graphs from data/outputs/branching/")
+elif FOLDER_SOURCE == "pr":
+    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "pr")
+    CATEGORY_LABEL = "pr"
+    print("[CONFIG] Processing PR graphs from data/outputs/pr/")
+elif FOLDER_SOURCE == "communication":
+    PR_OUT_DIR = os.path.join(ROOT, "data", "outputs", "communication")
+    CATEGORY_LABEL = "communication"
+    print("[CONFIG] Processing communication graphs from data/outputs/communication/")
+else:
+    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr' or 'communication'.")
+
+IN_OVERALL_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_overall.csv")
+IN_AVG_FP = os.path.join(PR_OUT_DIR, "team_transition_edges_avg_session.csv")
+IN_FREQ_FP = os.path.join(PR_OUT_DIR, "team_event_frequency.csv")
+IN_SESS_FP = os.path.join(PR_OUT_DIR, "team_transition_sessions_count.csv")
+IN_CLUSTER_FP = os.path.join(PR_OUT_DIR, f"behavior_clusters_{FOLDER_SOURCE}.csv")
+
+OUT_TEAMS_DIR = PR_OUT_DIR
+OUT_CLUSTERS_DIR = os.path.join(PR_OUT_DIR, "clusters")
+
 
 # ---------- Tiny utils ----------
 def _wrap_team_list(teams: list[str], max_line_len: int = 70, max_teams: int = 40) -> str:
