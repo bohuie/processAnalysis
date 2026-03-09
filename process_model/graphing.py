@@ -551,8 +551,8 @@ def main():
                         help="Graphviz size string (e.g. '8,5')")
     parser.add_argument("--min-edge-prob", type=float, default=0.0,
                         help="Minimum edge probability to draw (visual filter), default: 0.0")
-    parser.add_argument("--z-threshold", type=float, default=Z_THRESHOLD,
-                        help=f"abs(z_score) cutoff for avg-session team graphs (default: {Z_THRESHOLD})")
+    parser.add_argument("--z-threshold", type=float, default=0.5,
+                        help="abs(z_score) cutoff for avg-session team graphs (default: 0.5)")
     parser.add_argument("--no-preserve-connectivity", dest="preserve_connectivity",
                         action="store_false", default=True,
                         help="Disable connectivity repair (Pass 2 + 3)")
