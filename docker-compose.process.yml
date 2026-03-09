@@ -1,22 +1,4 @@
 services:
-  # Shared PostgreSQL database
-  db:
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=process_graphs
-      - POSTGRES_USER=analysis
-      - POSTGRES_PASSWORD=analysis_secure_password
-    volumes:
-      - process_db_data:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U analysis -d process_graphs"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # Ollama LLM service
   llm:
     image: ollama/ollama:latest
@@ -39,11 +21,8 @@ services:
     environment:
       - AI_MODE=offline
       - OLLAMA_HOST=http://llm:11434
-      - DATABASE_URL=postgresql://analysis:analysis_secure_password@db:5432/process_graphs
       - PYTHONUNBUFFERED=1
     depends_on:
-      db:
-        condition: service_healthy
       llm:
         condition: service_healthy
     volumes:
@@ -56,5 +35,4 @@ services:
       - ./.env:/app/.env
 
 volumes:
-  process_db_data:
   ollama_data:
