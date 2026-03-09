@@ -5,8 +5,6 @@ import re
 import glob
 import numpy as np
 import pandas as pd
-from pathlib import Path
-from dotenv import load_dotenv
 
 from src.utils.markov_common import (
     normalize_event_field,
@@ -19,81 +17,54 @@ from src.utils.markov_common import (
 MERGE_EVENTS = {"reviewed_merge", "self_merge"}
 NO_MERGE_EVENTS = {"no_merge"}
 
-
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-
-# ============================================================
-# CONFIGURATION SWITCH - Choose which files to process
-# ============================================================
-# FILE_SOURCE = "branching" or "pr_labels"
-script_path = Path(__file__).resolve()
-env_path = script_path.parent.parent / ".env"
-
-print(f"[DEBUG] Script location: {script_path}")
-print(f"[DEBUG] Looking for .env at: {env_path}")
-print(f"[DEBUG] .env exists: {env_path.exists()}")
-
-load_dotenv(dotenv_path=env_path)
-FILE_SOURCE = os.getenv("FILE_SOURCE")
-print(f"[DEBUG] FILE_SOURCE = {FILE_SOURCE}")
-
-
-# ----------------------------
-# Configs
-# ----------------------------
-BRANCHING_CONFIG = {
-    "data_folder": os.path.join(ROOT, "data", "graph_labels"),
-    "pattern": "*_labels_branching_and_structure.csv",
-    "regex": re.compile(
-        r"^(?:CLEAN_)?(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
-        re.IGNORECASE,
-    ),
-    "example": "year-long-project-team-15_labels_branching_and_structure.csv",
-    "output_folder": os.path.join(ROOT, "data", "outputs", "branching_individual"),
+# Process ALL datasets every run
+CONFIGS = {
+    "branching": {
+        "data_folder": os.path.join(ROOT, "data", "graph_labels"),
+        "pattern": "*_labels_branching_and_structure.csv",
+        "regex": re.compile(
+            r"^(?:CLEAN_)?(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
+            re.IGNORECASE,
+        ),
+        "example": "year-long-project-team-15_labels_branching_and_structure.csv",
+        "output_folder": os.path.join(ROOT, "data", "outputs", "branching_individual"),
+        "mode": "branching",
+    },
+    "pr": {
+        "data_folder": os.path.join(ROOT, "data", "csv"),
+        "pattern": "*year-long-project-team-*.csv",
+        "regex": re.compile(
+            r"^(?:CLEAN_)?(?:pr_labels_)?(year-long-project-team-\d+)\.csv$",
+            re.IGNORECASE,
+        ),
+        "example": "pr_labels_year-long-project-team-15.csv",
+        "output_folder": os.path.join(ROOT, "data", "outputs", "pr_individual"),
+        "mode": "pr",
+    },
+    "communication": {
+        "data_folder": os.path.join(ROOT, "data", "csv"),
+        "pattern": "*year-long-project-team-*.csv",
+        "regex": re.compile(
+            r"^(?:CLEAN_)?(?:communication_labels_)?(year-long-project-team-\d+)\.csv$",
+            re.IGNORECASE,
+        ),
+        "example": "communication_labels_year-long-project-team-15.csv",
+        "output_folder": os.path.join(ROOT, "data", "outputs", "communication_individual"),
+        "mode": "communication",
+    },
 }
-
-PR_LABELS_CONFIG = {
-    "data_folder": os.path.join(ROOT, "data", "csv"),
-    "pattern": "*year-long-project-team-*.csv",
-    "regex": re.compile(
-        r"^(?:CLEAN_)?(?:pr_labels_)?(year-long-project-team-\d+)\.csv$",
-        re.IGNORECASE,
-    ),
-    "example": "pr_labels_year-long-project-team-15.csv",
-    "output_folder": os.path.join(ROOT, "data", "outputs", "pr_individual"),
-}
-
-if FILE_SOURCE == "branching":
-    CONFIG = BRANCHING_CONFIG
-    print("[CONFIG] Using branching_and_structure files (individual split by pr_author)")
-elif FILE_SOURCE == "pr_labels":
-    CONFIG = PR_LABELS_CONFIG
-    print("[CONFIG] Using pr_labels files (individual split by derived user column)")
-else:
-    raise ValueError(f"Invalid FILE_SOURCE: {FILE_SOURCE}. Must be 'branching' or 'pr_labels'")
-
-DATA_FOLDER = CONFIG["data_folder"]
-TEAM_RE = CONFIG["regex"]
-OUT_FOLDER = CONFIG["output_folder"]
-os.makedirs(OUT_FOLDER, exist_ok=True)
 
 
 # Timestamp helpers
 def parse_event_cell(ev) -> list[str]:
-    """
-    Original CSV stores events like "['reviewed_merge']" (string).
-    This returns a real list[str]. If it's already a string label, returns [label].
-    """
-    import ast  # local import is fine; not a nested function
-
+    import ast
     if ev is None or (isinstance(ev, float) and pd.isna(ev)):
         return []
-
     if isinstance(ev, list):
         return [e for e in ev if isinstance(e, str)]
-
     if isinstance(ev, str):
         s = ev.strip()
         if s.startswith("[") and s.endswith("]"):
@@ -104,18 +75,10 @@ def parse_event_cell(ev) -> list[str]:
             except Exception:
                 pass
         return [s]
-
     return []
 
 
 def pick_timestamp_row(row: pd.Series, events: list[str]) -> str | None:
-    """
-    Timestamp rules:
-    - default: created_at
-    - if reviewed_merge/self_merge: merged_at
-    - if no_merge: updated_at
-    If chosen col missing/NaN, fall back to created_at.
-    """
     use_col = "created_at"
     if any(e in MERGE_EVENTS for e in events):
         use_col = "merged_at"
@@ -132,55 +95,42 @@ def pick_timestamp_row(row: pd.Series, events: list[str]) -> str | None:
     dt = pd.to_datetime(val, errors="coerce", utc=True)
     if pd.isna(dt):
         return str(val)
-
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def ensure_timestamp_column(df: pd.DataFrame, fp: str) -> pd.DataFrame:
-    """
-    If df already has 'timestamp', keep it.
-    Else create df['timestamp'] from created_at/updated_at/merged_at using event-based rules.
-    """
     if "timestamp" in df.columns:
         return df
-
-    # We need at least created_at to do anything sensible.
     if "created_at" not in df.columns:
         raise KeyError(
-            f"{fp} has no 'timestamp' column and is missing 'created_at', so we can't derive timestamps.\n"
+            f"{fp} has no 'timestamp' and is missing 'created_at' so we can't derive timestamps.\n"
             f"Columns found: {sorted(df.columns)}"
         )
 
-    # updated_at / merged_at may be missing in some datasets — we allow that (fallback to created_at).
     timestamps: list[str | None] = []
     for _, row in df.iterrows():
         events = parse_event_cell(row.get("event"))
-        ts = pick_timestamp_row(row, events)
-        timestamps.append(ts)
+        timestamps.append(pick_timestamp_row(row, events))
 
     out = df.copy()
     out["timestamp"] = timestamps
     return out
 
 
-# ============================================================
-# Other helpers
-# ============================================================
-def discover_team_files() -> list[str]:
-    search_pattern = os.path.join(DATA_FOLDER, CONFIG["pattern"])
-    hits = glob.glob(search_pattern)
-    files = sorted(set(hits))
+def discover_team_files(config: dict) -> list[str]:
+    search_pattern = os.path.join(config["data_folder"], config["pattern"])
+    files = sorted(set(glob.glob(search_pattern)))
     if not files:
         raise FileNotFoundError(
-            f"No label CSVs found in {DATA_FOLDER}\n"
-            f"Expected e.g.: {os.path.join(DATA_FOLDER, CONFIG['example'])}"
+            f"No label CSVs found in {config['data_folder']}\n"
+            f"Expected e.g.: {os.path.join(config['data_folder'], config['example'])}"
         )
     return files
 
 
-def parse_team_name_and_number(fp: str) -> tuple[str, str]:
+def parse_team_name_and_number(fp: str, team_re: re.Pattern) -> tuple[str, str]:
     base = os.path.basename(fp)
-    m = TEAM_RE.match(base)
+    m = team_re.match(base)
     team_name = m.group(1) if m else "unknown-team"
     num_m = re.search(r"team-(\d+)", team_name)
     team_number = num_m.group(1) if num_m else "unknown"
@@ -193,12 +143,11 @@ def norm_user(x) -> str:
     return str(x).strip()
 
 
-def derive_user_column_for_pr_labels(df: pd.DataFrame) -> pd.Series:
+def derive_user_non_branching(df: pd.DataFrame) -> pd.Series:
     """
-    Rule:
-      - look at `source` first
-      - if empty OR "pr" => user = pr_author
-      - else if "review" => user = author
+    Generic user derivation used for pr + communication:
+      - if source empty OR "pr" => pr_author
+      - if source == "review"  => author
       - else fallback: pr_author then author
     """
     src = df.get("source")
@@ -219,24 +168,14 @@ def derive_user_column_for_pr_labels(df: pd.DataFrame) -> pd.Series:
     user = np.where(
         (src_norm == "") | (src_norm == "pr"),
         pr_author_norm,
-        np.where(
-            src_norm == "review",
-            author_norm,
-            np.where(pr_author_norm != "", pr_author_norm, author_norm),
-        ),
+        np.where(src_norm == "review", author_norm, np.where(pr_author_norm != "", pr_author_norm, author_norm)),
     )
-
     return pd.Series(user, index=df.index).astype(str).str.strip().replace({"nan": ""})
 
 
 def explode_events_with_extras(df: pd.DataFrame, extra_cols: list[str]) -> pd.DataFrame:
-    """
-    Explodes `event` using the same parsing as normalize_event_field, while preserving
-    extra columns (e.g., 'user') and stable ordering via _row_idx.
-    """
     out = df.copy()
 
-    # pr_id and timestamp must exist here
     out["pr_id"] = pd.to_numeric(out["pr_id"], errors="coerce").astype("Int64")
     out["timestamp"] = pd.to_datetime(out["timestamp"], errors="coerce", utc=True)
 
@@ -256,62 +195,44 @@ def explode_events_with_extras(df: pd.DataFrame, extra_cols: list[str]) -> pd.Da
     return out[keep]
 
 
-def load_csv_with_user(fp: str, file_source: str) -> pd.DataFrame:
+def load_csv_with_user(fp: str, mode: str) -> pd.DataFrame:
     raw = pd.read_csv(fp, low_memory=False)
-
     required = {"pr_id", "event"}
     missing = required - set(raw.columns)
     if missing:
         raise ValueError(f"{fp} missing columns: {missing}")
 
-    # Ensure timestamp exists (derive if needed)
     raw = ensure_timestamp_column(raw, fp)
-
-    # Drop rows where derived timestamp failed
     raw["timestamp"] = raw["timestamp"].astype(str).replace({"nan": ""}).str.strip()
     raw = raw[raw["timestamp"].ne("")].copy()
 
-    # Derive user column
-    if file_source == "branching":
+    if mode == "branching":
         if "pr_author" not in raw.columns:
             raise ValueError(f"{fp} missing required column for branching: pr_author")
         raw["user"] = raw["pr_author"].apply(norm_user)
     else:
-        raw["user"] = derive_user_column_for_pr_labels(raw)
+        raw["user"] = derive_user_non_branching(raw)
 
     raw["user"] = raw["user"].astype(str).str.strip()
     raw = raw[raw["user"].ne("")].copy()
 
-    # Stable ordering
     raw["_row_idx"] = np.arange(len(raw))
-
-    # Explode events using shared helper (returns pr_id,timestamp,event + _row_idx)
-    events_only = explode_and_sort_events(raw, keep_row_idx=True)
-
-    # Explode with user preserved in same ordering
     raw_u = explode_events_with_extras(raw, extra_cols=["user"])
 
-    # Align safety: if something went wrong, raw_u is the source of truth
-    if len(events_only) != len(raw_u):
-        out = raw_u[["pr_id", "timestamp", "event", "user"]].copy()
-        out["user"] = out["user"].astype(str).str.strip()
-        return out[out["user"].ne("")]
-
-    out = events_only.reset_index(drop=True).copy()
-    out["user"] = raw_u["user"].astype(str).str.strip().fillna("").reset_index(drop=True)
-    out = out[out["user"].ne("")]
-
-    return out[["pr_id", "timestamp", "event", "user"]]
+    return raw_u[["pr_id", "timestamp", "event", "user"]].copy()
 
 
-# ============================================================
-# Main
-# ============================================================
-def main():
-    files = discover_team_files()
-    print(f"[INFO] Found {len(files)} files:")
-    for f in files:
-        print(" -", f)
+def process_dataset(dataset_name: str, config: dict) -> None:
+    out_folder = config["output_folder"]
+    os.makedirs(out_folder, exist_ok=True)
+
+    print(f"\n{'='*70}")
+    print(f"Processing individual transitions: {dataset_name}")
+    print(f"{'='*70}")
+    print(f"[INFO] Output -> {out_folder}")
+
+    files = discover_team_files(config)
+    print(f"[INFO] Found {len(files)} files")
 
     all_overall: list[pd.DataFrame] = []
     all_avg: list[pd.DataFrame] = []
@@ -319,11 +240,10 @@ def main():
     sessions_rows: list[dict] = []
 
     for fp in files:
-        team_name, team_number = parse_team_name_and_number(fp)
-        df = load_csv_with_user(fp, FILE_SOURCE)
+        team_name, team_number = parse_team_name_and_number(fp, config["regex"])
+        df = load_csv_with_user(fp, config["mode"])
 
         for user, udf in df.groupby("user", sort=False):
-            # event frequency (per user)
             freq = udf["event"].value_counts().reset_index()
             freq.columns = ["event", "count"]
             freq.insert(0, "user", user)
@@ -346,28 +266,32 @@ def main():
             all_avg.append(avg_edges)
 
             sessions_rows.append(
-                {
-                    "team_name": team_name,
-                    "team_number": team_number,
-                    "user": user,
-                    "num_pr_sessions": int(n_sessions),
-                }
+                {"team_name": team_name, "team_number": team_number, "user": user, "num_pr_sessions": int(n_sessions)}
             )
 
+    if not all_overall:
+        print(f"[WARN] No metrics generated for {dataset_name}")
+        return
+
     pd.concat(all_overall, ignore_index=True).to_csv(
-        os.path.join(OUT_FOLDER, "individual_transition_edges_overall.csv"), index=False
+        os.path.join(out_folder, "individual_transition_edges_overall.csv"), index=False
     )
     pd.concat(all_avg, ignore_index=True).to_csv(
-        os.path.join(OUT_FOLDER, "individual_transition_edges_avg_session.csv"), index=False
+        os.path.join(out_folder, "individual_transition_edges_avg_session.csv"), index=False
     )
     pd.DataFrame(sessions_rows).to_csv(
-        os.path.join(OUT_FOLDER, "individual_transition_sessions_count.csv"), index=False
+        os.path.join(out_folder, "individual_transition_sessions_count.csv"), index=False
     )
     pd.concat(all_freq, ignore_index=True).to_csv(
-        os.path.join(OUT_FOLDER, "individual_event_frequency.csv"), index=False
+        os.path.join(out_folder, "individual_event_frequency.csv"), index=False
     )
 
-    print("[OK] Wrote individual transition CSVs to:", OUT_FOLDER)
+    print(f"[OK] Wrote individual transition CSVs to: {out_folder}")
+
+
+def main():
+    for dataset_name, config in CONFIGS.items():
+        process_dataset(dataset_name, config)
 
 
 if __name__ == "__main__":
