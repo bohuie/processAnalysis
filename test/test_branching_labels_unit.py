@@ -7,7 +7,7 @@ import pandas as pd
 from event_labelling.CodeStructure_Branching.label_feature_size import label_feature_size
 from event_labelling.CodeStructure_Branching.label_refactor_size import label_refactor_size
 from event_labelling.CodeStructure_Branching.label_features_per_branch import label_features_per_branch
-from event_labelling.CodeStructure_Branching.clean_lable import create_clean_branching_label_csv
+from event_labelling.CodeStructure_Branching.clean_lables import create_clean_branching_label_csv
 
 
 def test_feature_size_classification_per_file():
