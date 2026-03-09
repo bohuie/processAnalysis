@@ -560,55 +560,56 @@ def extract_repository_data(
 
     return results
 
-
-if __name__ == "__main__":
+def run_batch_extraction(
+    repo_owner: str,
+    repo_names: List[str],
+    output_base_dir: str = "./data",
+    save_json: bool = True,
+    save_csv: bool = True,
+    include_commits: bool = True,
+    include_files: bool = True,
+    include_comments: bool = True,
+) -> tuple:
+    """
+    Run extraction for multiple repositories.
     
-    # ==================== CONFIGURATION ====================
+    Args:
+        repo_owner: GitHub organization/user name
+        repo_names: List of repository names to extract
+        output_base_dir: Base directory for output files
+        save_json: Whether to save JSON files
+        save_csv: Whether to save CSV files
+        include_commits: Whether to extract commits
+        include_files: Whether to extract file changes
+        include_comments: Whether to extract comments
     
-    REPO_OWNER = "COSC-499-W2023"
-    REPO_NAMES = [
-        #"year-long-project-team-2",
-        #"year-long-project-team-8",
-        #"year-long-project-team-9",
-        #"year-long-project-team-10",
-        #"year-long-project-team-11",
-        #"year-long-project-team-12",
-        "year-long-project-team-15"
-    ]
-    OUTPUT_DIR = "./data"
-    SAVE_JSON = True
-    SAVE_CSV = True
-    INCLUDE_COMMITS = True
-    INCLUDE_FILES = True
-    INCLUDE_COMMENTS = True
-    
-    # ==================== EXECUTION ====================
-    
+    Returns:
+        Tuple of (all_results, failed_repos)
+    """
     print("\n" + "=" * 80)
     print("GITHUB MULTIPLE REPOSITORY DATA EXTRACTION")
     print("=" * 80)
     print(f"Working directory: {Path.cwd()}")
-    print(f"Script location: {Path(__file__).parent}")
-    print(f"Total repositories to process: {len(REPO_NAMES)}")
+    print(f"Total repositories to process: {len(repo_names)}")
     print("=" * 80)
     
     all_results = []
     failed_repos = []
     
     try:
-        for idx, repo_name in enumerate(REPO_NAMES, 1):
-            print(f"\n[{idx}/{len(REPO_NAMES)}] Processing: {repo_name}")
+        for idx, repo_name in enumerate(repo_names, 1):
+            print(f"\n[{idx}/{len(repo_names)}] Processing: {repo_name}")
             
             try:
                 results = extract_repository_data(
-                    repo_owner=REPO_OWNER,
+                    repo_owner=repo_owner,
                     repo_name=repo_name,
-                    output_base_dir=OUTPUT_DIR,
-                    save_json=SAVE_JSON,
-                    save_csv=SAVE_CSV,
-                    include_commits=INCLUDE_COMMITS,
-                    include_files=INCLUDE_FILES,
-                    include_comments=INCLUDE_COMMENTS,
+                    output_base_dir=output_base_dir,
+                    save_json=save_json,
+                    save_csv=save_csv,
+                    include_commits=include_commits,
+                    include_files=include_files,
+                    include_comments=include_comments,
                 )
                 
                 all_results.append(results)
@@ -635,7 +636,6 @@ if __name__ == "__main__":
                 print(f"\n  {repo_name}:")
                 for error in errors:
                     print(f"    - {error}")
-            sys.exit(1)
         else:
             print("\n✅ ALL REPOSITORIES SUCCESSFULLY EXTRACTED")
         
@@ -644,8 +644,48 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\n[FATAL ERROR] {e}")
         traceback.print_exc()
-        sys.exit(1)
-        
+        failed_repos.append(("FATAL", [str(e)]))
+    
     print("\n" + "=" * 80)
-    print(f"✅ SUCCESS - Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"{'✅ SUCCESS' if not failed_repos else '❌ COMPLETED WITH ERRORS'} - Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 80)
+    
+    return all_results, failed_repos
+
+if __name__ == "__main__":
+    
+    # ==================== CONFIGURATION ====================
+    
+    REPO_OWNER = "COSC-499-W2023"
+    REPO_NAMES = [
+        #"year-long-project-team-2",
+        #"year-long-project-team-8",
+        #"year-long-project-team-9",
+        #"year-long-project-team-10",
+        #"year-long-project-team-11",
+        #"year-long-project-team-12",
+        "year-long-project-team-15"
+    ]
+    OUTPUT_DIR = "./data"
+    SAVE_JSON = True
+    SAVE_CSV = True
+    INCLUDE_COMMITS = True
+    INCLUDE_FILES = True
+    INCLUDE_COMMENTS = True
+    
+    # ==================== EXECUTION ====================
+    
+    all_results, failed_repos = run_batch_extraction(
+        repo_owner=REPO_OWNER,
+        repo_names=REPO_NAMES,
+        output_base_dir=OUTPUT_DIR,
+        save_json=SAVE_JSON,
+        save_csv=SAVE_CSV,
+        include_commits=INCLUDE_COMMITS,
+        include_files=INCLUDE_FILES,
+        include_comments=INCLUDE_COMMENTS,
+    )
+    
+    # Exit with error code if any repos failed
+    if failed_repos:
+        sys.exit(1)
