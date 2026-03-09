@@ -15,11 +15,10 @@ import os
 import glob
 import datetime
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 import psycopg2
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
 
 from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
@@ -141,7 +140,8 @@ def graphs_count():
         ensure_table(conn)
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM graphs;")
-            (n,) = cur.fetchone()
+            row = cur.fetchone()
+            n = row[0] if row else 0
         return {"count": n}
     finally:
         conn.close()
@@ -170,6 +170,48 @@ def graphs_list(limit: int = 50):
                 }
                 for r in rows
             ]
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/graphs/metrics")
+def graphs_metrics():
+    conn = get_conn()
+    try:
+        ensure_table(conn)
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM graphs;")
+            row = cur.fetchone()
+            total_graphs = row[0] if row else 0
+
+            cur.execute(
+                "SELECT dataset, COUNT(*) FROM graphs GROUP BY dataset ORDER BY dataset;"
+            )
+            dataset_rows = cur.fetchall()
+
+            cur.execute(
+                "SELECT dataset, team, COUNT(*) FROM graphs GROUP BY dataset, team ORDER BY dataset, team;"
+            )
+            team_rows = cur.fetchall()
+
+        by_dataset: Dict[str, int] = {row[0]: row[1] for row in dataset_rows}
+        teams_per_dataset: Dict[str, int] = {}
+        graphs_per_team: Dict[str, Dict[str, int]] = {}
+
+        for dataset, team, count in team_rows:
+            if dataset not in graphs_per_team:
+                graphs_per_team[dataset] = {}
+            graphs_per_team[dataset][team] = count
+
+        for dataset, team_map in graphs_per_team.items():
+            teams_per_dataset[dataset] = len(team_map)
+
+        return {
+            "total_graphs": total_graphs,
+            "by_dataset": by_dataset,
+            "teams_per_dataset": teams_per_dataset,
+            "graphs_per_team": graphs_per_team,
         }
     finally:
         conn.close()
