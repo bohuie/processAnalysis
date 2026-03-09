@@ -1,20 +1,27 @@
-import os, re, glob
+# process_model/transition_edges.py
+
+import os
+import re
+import glob
+import ast
 import pandas as pd
 import numpy as np
-import ast
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
 # ============================================================
-# CONFIGURATION - Process BOTH branching and PR data
+# CONFIGURATION - Process ALL datasets every run (no env toggles)
 # ============================================================
 
 BRANCHING_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "graph_labels", "clean"),
     "prefix": "CLEAN_year-long-project-team-",
     "pattern": "*_labels_branching_and_structure.csv",
-    "regex": re.compile(r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$", re.IGNORECASE),
+    "regex": re.compile(
+        r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
+        re.IGNORECASE,
+    ),
     "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv",
     "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
 }
@@ -23,7 +30,10 @@ PR_LABELS_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "csv"),
     "prefix": "CLEAN_pr_labels_",
     "pattern": "year-long-project-team-*.csv",
-    "regex": re.compile(r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$", re.IGNORECASE),
+    "regex": re.compile(
+        r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$",
+        re.IGNORECASE,
+    ),
     "example": "CLEAN_pr_labels_year-long-project-team-7.csv",
     "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
 }
@@ -32,7 +42,10 @@ COMM_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "csv"),
     "prefix": "CLEAN_communication_labels_",
     "pattern": "year-long-project-team-*.csv",
-    "regex": re.compile(r"^CLEAN_communication_labels_(year-long-project-team-\d+)\.csv$", re.IGNORECASE),
+    "regex": re.compile(
+        r"^CLEAN_communication_labels_(year-long-project-team-\d+)\.csv$",
+        re.IGNORECASE,
+    ),
     "example": "CLEAN_communication_labels_year-long-project-team-7.csv",
     "output_folder": os.path.join(ROOT, "data", "outputs", "communication"),
 }
@@ -40,6 +53,7 @@ COMM_CONFIG = {
 CONFIGS = {
     "branching": BRANCHING_CONFIG,
     "pr_labels": PR_LABELS_CONFIG,
+    "communication": COMM_CONFIG,
 }
 
 
@@ -48,12 +62,13 @@ CONFIGS = {
 # ============================================================
 
 def discover_clean_team_files(config: dict) -> list[str]:
-    search_pattern = os.path.join(config["data_folder"], f"{config['prefix']}{config['pattern']}")
+    data_folder = config["data_folder"]
+    search_pattern = os.path.join(data_folder, f"{config['prefix']}{config['pattern']}")
     files = sorted(set(glob.glob(search_pattern)))
     if not files:
         raise FileNotFoundError(
-            f"No CLEAN label CSVs found in {config['data_folder']}\n"
-            f"Expected e.g.: {os.path.join(config['data_folder'], config['example'])}"
+            f"No CLEAN label CSVs found in {data_folder}\n"
+            f"Expected e.g.: {os.path.join(data_folder, config['example'])}"
         )
     return files
 
@@ -109,6 +124,8 @@ def load_noholes_csv(fp: str) -> pd.DataFrame:
 
     df = df.dropna(subset=["pr_id", "timestamp"])
     df = df[df["event"].ne("")]
+
+    # stable ordering within same timestamp
     df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
 
     return df[["pr_id", "timestamp", "event"]]
@@ -177,67 +194,81 @@ def add_transition_probs(edges: pd.DataFrame) -> pd.DataFrame:
 # MAIN
 # ============================================================
 
-def main():
-    for dataset_name, config in CONFIGS.items():
-        print(f"\n{'='*70}")
-        print(f"Processing: {dataset_name}")
-        print(f"{'='*70}")
+def process_dataset(dataset_name: str, config: dict) -> None:
+    print(f"\n{'='*70}")
+    print(f"Processing: {dataset_name}")
+    print(f"{'='*70}")
 
-        out_folder = config["output_folder"]
-        os.makedirs(out_folder, exist_ok=True)
+    out_folder = config["output_folder"]
+    os.makedirs(out_folder, exist_ok=True)
 
+    try:
+        files = discover_clean_team_files(config)
+    except FileNotFoundError as e:
+        print(f"[SKIP] {e}")
+        return
+
+    print(f"[INFO] Found {len(files)} CLEAN team file(s). Output -> {out_folder}")
+
+    all_overall, all_avg, all_freq, sessions_rows = [], [], [], []
+
+    for fp in files:
+        team_name, team_number = parse_team_name_and_number(fp, config)
         try:
-            files = discover_clean_team_files(config)
-        except FileNotFoundError as e:
-            print(f"[SKIP] {e}")
+            df = load_noholes_csv(fp)
+        except Exception as e:
+            print(f"[WARN] Skipping {os.path.basename(fp)}: {e}")
             continue
 
-        print(f"[INFO] Found {len(files)} CLEAN team files")
+        # event frequency
+        freq = df["event"].value_counts().reset_index()
+        freq.columns = ["event", "count"]
+        freq.insert(0, "team_number", team_number)
+        freq.insert(0, "team_name", team_name)
+        all_freq.append(freq)
 
-        all_overall, all_avg, all_freq, sessions_rows = [], [], [], []
+        overall_edges, n_sessions = compute_overall_edges(df)
+        avg_edges = compute_avg_session_edges(df, n_sessions=n_sessions)
 
-        for fp in files:
-            team_name, team_number = parse_team_name_and_number(fp, config)
-            df = load_noholes_csv(fp)
+        overall_edges = add_transition_probs(overall_edges)
+        avg_edges = add_transition_probs(avg_edges)
 
-            freq = df["event"].value_counts().reset_index()
-            freq.columns = ["event", "count"]
-            freq.insert(0, "team_number", team_number)
-            freq.insert(0, "team_name", team_name)
-            all_freq.append(freq)
+        for df_out in (overall_edges, avg_edges):
+            df_out.insert(0, "team_name", team_name)
+            df_out.insert(1, "team_number", team_number)
 
-            overall_edges, n_sessions = compute_overall_edges(df)
-            avg_edges = compute_avg_session_edges(df, n_sessions=n_sessions)
+        all_overall.append(overall_edges)
+        all_avg.append(avg_edges)
 
-            overall_edges = add_transition_probs(overall_edges)
-            avg_edges = add_transition_probs(avg_edges)
+        sessions_rows.append({
+            "team_name": team_name,
+            "team_number": team_number,
+            "num_pr_sessions": int(n_sessions),
+        })
 
-            for df_out in (overall_edges, avg_edges):
-                df_out.insert(0, "team_name", team_name)
-                df_out.insert(1, "team_number", team_number)
+    if not all_overall:
+        print(f"[WARN] No usable data produced for {dataset_name}")
+        return
 
-            all_overall.append(overall_edges)
-            all_avg.append(avg_edges)
-            sessions_rows.append({
-                "team_name": team_name,
-                "team_number": team_number,
-                "num_pr_sessions": int(n_sessions),
-            })
+    pd.concat(all_overall, ignore_index=True).to_csv(
+        os.path.join(out_folder, "team_transition_edges_overall.csv"), index=False
+    )
+    pd.concat(all_avg, ignore_index=True).to_csv(
+        os.path.join(out_folder, "team_transition_edges_avg_session.csv"), index=False
+    )
+    pd.DataFrame(sessions_rows).to_csv(
+        os.path.join(out_folder, "team_transition_sessions_count.csv"), index=False
+    )
+    pd.concat(all_freq, ignore_index=True).to_csv(
+        os.path.join(out_folder, "team_event_frequency.csv"), index=False
+    )
 
-        pd.concat(all_overall, ignore_index=True).to_csv(
-            os.path.join(out_folder, "team_transition_edges_overall.csv"), index=False
-        )
-        pd.concat(all_avg, ignore_index=True).to_csv(
-            os.path.join(out_folder, "team_transition_edges_avg_session.csv"), index=False
-        )
-        pd.DataFrame(sessions_rows).to_csv(
-            os.path.join(out_folder, "team_transition_sessions_count.csv"), index=False
-        )
-        pd.concat(all_freq, ignore_index=True).to_csv(
-            os.path.join(out_folder, "team_event_frequency.csv"), index=False
-        )
+    print(f"[OK] Wrote transition CSVs for {dataset_name} -> {out_folder}")
 
-        print(f"[OK] Wrote {dataset_name} transition CSVs to: {out_folder}")
+
+def main():
+    for dataset_name, config in CONFIGS.items():
+        process_dataset(dataset_name, config)
 
 
 if __name__ == "__main__":
