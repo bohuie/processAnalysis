@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import ast
 import pandas as pd
+from typing import Optional
 
 
 # PR-level label types to keep (filter out per-file labels)
@@ -55,7 +56,7 @@ def _parse_event_cell(ev) -> str:
     return str(ev)
 
 
-def _pick_timestamp(row: pd.Series) -> str | None:
+def _pick_timestamp(row: pd.Series) -> Optional[str]:
     """
     Timestamp selection logic:
     - For Merge State: use merged_at
@@ -85,7 +86,7 @@ def _pick_timestamp(row: pd.Series) -> str | None:
 
 def create_clean_branching_label_csv(
     input_csv_path: str, 
-    output_csv_path: str | None = None,
+    output_csv_path: Optional[str] = None,
     include_main_label: bool = False
 ) -> str:
     """
