@@ -106,7 +106,7 @@ class TestConnectivityRepair:
         keep_set = {("S", "A"), ("X", "Y")}
         all_nodes = set(G.nodes())
 
-        keep_set, n_before, n_after, bridges = repair_connectivity(keep_set, G, all_nodes)
+        keep_set, n_before, n_after, bridges = repair_connectivity(keep_set, G, G, all_nodes)
 
         assert n_before > 1, "expected 2 components before repair"
         assert n_after == 1, "expected 1 component after repair"
@@ -124,7 +124,7 @@ class TestConnectivityRepair:
         keep_set = {("A", "B"), ("B", "C")}
         all_nodes = set(G.nodes())
 
-        keep_set, n_before, n_after, bridges = repair_connectivity(keep_set, G, all_nodes)
+        keep_set, n_before, n_after, bridges = repair_connectivity(keep_set, G, G, all_nodes)
 
         assert n_before == 1
         assert n_after == 1
@@ -145,7 +145,7 @@ class TestConnectivityRepair:
         keep_set = {("S", "A")}
         all_nodes = set(G.nodes())
 
-        keep_set, fixes = fix_orphans(keep_set, G, all_nodes)
+        keep_set, fixes = fix_orphans(keep_set, G, G, all_nodes)
 
         assert fixes >= 1
         incident = {n for edge in keep_set for n in edge}
@@ -160,7 +160,7 @@ class TestConnectivityRepair:
         keep_set = {("A", "B"), ("B", "C")}
         all_nodes = set(G.nodes())
 
-        keep_set, fixes = fix_orphans(keep_set, G, all_nodes)
+        keep_set, fixes = fix_orphans(keep_set, G, G, all_nodes)
         assert fixes == 0
 
     # ------------------------------------------------------------------
@@ -176,12 +176,43 @@ class TestConnectivityRepair:
         all_nodes = set(G.nodes())
 
         def full_pipeline():
-            keep = set(G.edges())           # start: all edges (as filtered upstream)
-            keep, *_ = repair_connectivity(keep, G, all_nodes)
-            keep, _  = fix_orphans(keep, G, all_nodes)
+            keep = set(G.edges())
+            keep, *_ = repair_connectivity(keep, G, G, all_nodes)
+            keep, _  = fix_orphans(keep, G, G, all_nodes)
             return frozenset(keep)
 
         r1 = full_pipeline()
         r2 = full_pipeline()
         r3 = full_pipeline()
         assert r1 == r2 == r3
+
+    # ------------------------------------------------------------------
+    # Test 6: repair uses G_original (not G_filtered) for candidates
+    # ------------------------------------------------------------------
+    def test_repair_uses_original_graph_for_bridges(self):
+        """
+        G_filtered has no bridge between components.
+        G_original has the bridge (the z-score-filtered-out edge).
+        repair_connectivity must find the bridge from G_original.
+        """
+        G_filtered = _make_graph([
+            ("S", "A", 100),   # component 1
+            ("X", "Y", 80),    # component 2 — disconnected in filtered graph
+        ])
+        # Original (unfiltered) graph contains the bridge
+        G_original = _make_graph([
+            ("S", "A", 100),
+            ("X", "Y", 80),
+            ("S", "X", 30),    # bridge only in original
+        ])
+        keep_set  = {("S", "A"), ("X", "Y")}
+        all_nodes = {"S", "A", "X", "Y"}
+
+        keep_set, n_before, n_after, bridges = repair_connectivity(
+            keep_set, G_filtered, G_original, all_nodes
+        )
+
+        assert n_before == 2, "expected 2 components before"
+        assert n_after == 1,  "expected 1 component after repair via original"
+        assert ("S", "X") in keep_set, "bridge from original must be added"
+        assert bridges == 1

@@ -148,13 +148,18 @@ class _DSU:
         return self.find(x) == self.find(y)
 
 
-def repair_connectivity(keep_set: set, G: nx.DiGraph, all_nodes: set) -> tuple:
+def repair_connectivity(
+    keep_set: set,
+    G_filtered: nx.DiGraph,
+    G_original: nx.DiGraph,
+    all_nodes: set,
+) -> tuple:
     """
     Pass 2 — greedy connectivity repair using DSU.
 
-    If the pruned edge set leaves more than one weakly-connected component,
-    greedily re-adds the highest-weight original edges (by weight, then
-    deterministic (u,v) tie-break) until a single component is reached.
+    Computes connected components on the FILTERED graph (G_filtered).
+    Draws bridge candidates from the ORIGINAL unfiltered graph (G_original)
+    so that edges removed by z-score filtering can be restored.
 
     Returns (updated_keep_set, n_comp_before, n_comp_after, edges_added).
     """
@@ -167,10 +172,11 @@ def repair_connectivity(keep_set: set, G: nx.DiGraph, all_nodes: set) -> tuple:
     edges_added   = 0
 
     if remaining > 1:
+        # Candidates come from the ORIGINAL graph, not the filtered one.
         candidates = sorted(
             [
                 (u, v, data["weight"])
-                for u, v, data in G.edges(data=True)
+                for u, v, data in G_original.edges(data=True)
                 if (u, v) not in keep_set
             ],
             key=lambda e: (-e[2], str(e[0]), str(e[1])),
@@ -187,12 +193,18 @@ def repair_connectivity(keep_set: set, G: nx.DiGraph, all_nodes: set) -> tuple:
     return keep_set, n_comp_before, n_comp_after, edges_added
 
 
-def fix_orphans(keep_set: set, G: nx.DiGraph, all_nodes: set) -> tuple:
+def fix_orphans(
+    keep_set: set,
+    G_filtered: nx.DiGraph,
+    G_original: nx.DiGraph,
+    all_nodes: set,
+) -> tuple:
     """
     Pass 3 — orphan guardrail.
 
-    Any node with degree 0 in the undirected pruned set gets its single
-    strongest incident edge (by weight, deterministic tie-break) restored.
+    Detects isolated nodes in G_filtered. Restores the strongest incident
+    edge from G_original (the unfiltered graph) so edges pruned by z-score
+    filtering can be used as recovery candidates.
 
     Returns (updated_keep_set, orphan_count_fixed).
     """
@@ -204,12 +216,13 @@ def fix_orphans(keep_set: set, G: nx.DiGraph, all_nodes: set) -> tuple:
 
     fixes = 0
     for node in orphans:
+        # Pull candidates from the ORIGINAL graph.
         candidates = [
             (u, v, data["weight"])
-            for u, v, data in G.out_edges(node, data=True)
+            for u, v, data in G_original.out_edges(node, data=True)
         ] + [
             (u, v, data["weight"])
-            for u, v, data in G.in_edges(node, data=True)
+            for u, v, data in G_original.in_edges(node, data=True)
         ]
         if not candidates:
             continue
@@ -223,13 +236,15 @@ def fix_orphans(keep_set: set, G: nx.DiGraph, all_nodes: set) -> tuple:
 # ---------- Rendering ----------
 def build_markov_graph(user_label, edges_df, event_freq, output_path,
                        title_suffix="", normalize_probs=True,
-                       teams_in_cluster=None, config=None):
+                       teams_in_cluster=None, config=None,
+                       original_edges_df=None):
     """
     Build and render a Markov graph from an edge DataFrame.
 
-    edges_df should already be filtered upstream (e.g. by abs(z_score) >= threshold
-    for avg-session graphs).  Pass 2 (connectivity repair) and Pass 3 (orphan
-    guardrail) are applied to ensure the drawn graph is structurally sound.
+    edges_df          : filtered edges to display (e.g. abs(z_score) >= threshold)
+    original_edges_df : unfiltered edges used as candidate pool for connectivity
+                        repair (Pass 2) and orphan fix (Pass 3).  If None, falls
+                        back to using the filtered graph itself (no-op behavior).
     """
     edges_df = edges_df.copy()
     edges_df = edges_df[edges_df["count"] > 0]
@@ -237,42 +252,57 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
         print(f"[WARN] Skipping {user_label} — no edges.")
         return
 
-    # Build directed graph
-    G = nx.DiGraph()
-    for _, row in edges_df.iterrows():
-        a, b, w = str(row["from"]), str(row["to"]), float(row["count"])
-        if G.has_edge(a, b):
-            G[a][b]["weight"] += w
-        else:
-            G.add_edge(a, b, weight=w)
+    def _build_graph(df):
+        G = nx.DiGraph()
+        for _, row in df.iterrows():
+            a, b, w = str(row["from"]), str(row["to"]), float(row["count"])
+            if G.has_edge(a, b):
+                G[a][b]["weight"] += w
+            else:
+                G.add_edge(a, b, weight=w)
+        return G
 
-    # Transition probabilities
+    # Build the filtered (display) graph
+    G = _build_graph(edges_df)
+
+    # Build the original (candidate source) graph — falls back to G if not provided
+    if original_edges_df is not None:
+        orig_df = original_edges_df.copy()
+        orig_df = orig_df[orig_df["count"] > 0]
+        G_original = _build_graph(orig_df) if not orig_df.empty else G
+    else:
+        G_original = G
+
+    # Transition probabilities on the display graph
     for u, v in G.edges():
         total = sum(G[u][x]["weight"] for x in G.successors(u))
         G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0.0
 
-    # ---- Structural integrity (Pass 2 + Pass 3 only) ----
-    # Pass 1 is upstream: the caller passes a pre-filtered edges_df.
+    # ---- Structural integrity (Pass 2 + Pass 3) ----
+    # Displayed graph initialised from filtered edges.
+    # Bridge/orphan candidates drawn from original (unfiltered) graph.
     preserve_conn = getattr(config, "preserve_connectivity", True)
-    all_nodes     = set(G.nodes())
+    # all_nodes must cover both graphs so the DSU doesn't raise KeyError
+    # when G_original contains nodes that were z-score filtered out of G.
+    all_nodes     = set(G.nodes()) | set(G_original.nodes())
     edges_before  = G.number_of_edges()
 
-    # Start with all edges in the (already filtered) graph.
     keep_set = set(G.edges())
 
     if preserve_conn:
-        keep_set, n_comp_in, n_comp_out, bridges = repair_connectivity(keep_set, G, all_nodes)
-        keep_set, orphan_fixes = fix_orphans(keep_set, G, all_nodes)
+        keep_set, n_comp_in, n_comp_out, bridges = repair_connectivity(
+            keep_set, G, G_original, all_nodes
+        )
+        keep_set, orphan_fixes = fix_orphans(keep_set, G, G_original, all_nodes)
     else:
         n_comp_in = n_comp_out = bridges = orphan_fixes = 0
 
     final_count = len(keep_set)
 
-    # Diagnostics
     print(
-        f"[GRAPH] {user_label}: {edges_before} edges"
-        f" → Conn:{final_count} (+{bridges} bridges, +{orphan_fixes} orphan fixes)"
-        f"  |  components: {n_comp_in}→{n_comp_out}"
+        f"[GRAPH] {user_label}: {edges_before} filtered edges"
+        f" -> Conn:{final_count} (+{bridges} bridges, +{orphan_fixes} orphan fixes)"
+        f"  |  components: {n_comp_in}->{n_comp_out}"
     )
     if n_comp_out > 1:
         print(f"[WARN] {user_label}: {n_comp_out} component(s) remain — original graph may be disconnected.")
@@ -366,13 +396,16 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
 # ---------- Team graphs ----------
 def render_team_graphs(overall_df: pd.DataFrame, avg_zscored_df: pd.DataFrame,
                        freq_map: dict, out_teams_dir: str, category_label: str,
-                       config=None):
+                       config=None, avg_df_raw: pd.DataFrame = None):
     """
     Render per-team overall and avg-session Markov graphs.
 
-    overall_df     : unfiltered overall edge counts (no z_score equivalent)
+    overall_df     : unfiltered overall edge counts
     avg_zscored_df : avg-session edges pre-filtered by abs(z_score) >= threshold
+    avg_df_raw     : unfiltered avg-session edges (used as repair candidate source)
     """
+    have_raw = avg_df_raw is not None and not avg_df_raw.empty
+
     teams = sorted(
         set(overall_df["team_number"]).union(set(avg_zscored_df["team_number"])),
         key=lambda x: int(x) if str(x).isdigit() else 999999,
@@ -397,10 +430,15 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_zscored_df: pd.DataFrame,
             output_path=os.path.join(out_overall_dir, f"team{team_str}_overall.png"),
             title_suffix=f"Overall \u2022 {category_label}",
             config=config,
+            # overall is already unfiltered; original_edges_df not needed
         )
 
-        # Avg-session graph — pre-filtered by z-score threshold
+        # Avg-session: filtered edges displayed; raw unfiltered used for repair
         t_avg = avg_zscored_df[avg_zscored_df["team_number"] == team_str][["from", "to", "count"]].copy()
+        t_avg_raw = (
+            avg_df_raw[avg_df_raw["team_number"] == team_str][["from", "to", "count"]].copy()
+            if have_raw else None
+        )
         build_markov_graph(
             user_label=f"Team {team_str}",
             edges_df=t_avg,
@@ -408,6 +446,7 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_zscored_df: pd.DataFrame,
             output_path=os.path.join(out_avg_dir, f"team{team_str}_avg_session.png"),
             title_suffix=f"Avg Session (z-filtered) \u2022 {category_label}",
             config=config,
+            original_edges_df=t_avg_raw,
         )
 
 
@@ -542,10 +581,11 @@ def main():
         
         print(f"[INFO] Loading data...")
         overall_df  = pd.read_csv(in_overall_fp, low_memory=False)
+        avg_df      = pd.read_csv(in_avg_fp, low_memory=False)       # raw unfiltered
         zscores_df  = pd.read_csv(in_zscores_fp, low_memory=False)
         zfilt_df    = pd.read_csv(in_zfilt_fp, low_memory=False) if os.path.exists(in_zfilt_fp) else pd.DataFrame()
 
-        for df in [overall_df, zscores_df]:
+        for df in [overall_df, avg_df, zscores_df]:
             required_cols = {"team_number", "from", "to", "count"}
             missing_cols = required_cols - set(df.columns)
             if missing_cols:
@@ -575,9 +615,10 @@ def main():
         out_teams_dir    = out_base_dir
         out_clusters_dir = os.path.join(out_base_dir, "clusters")
 
-        print(f"[INFO] Rendering team graphs (avg filtered at |z|>={z_threshold})...")
+        print(f"[INFO] Rendering team graphs (avg filtered at |z|>={z_threshold}, repair from raw)...")
         render_team_graphs(overall_df, avg_zscored_df, freq_map,
-                           out_teams_dir, category_label, config=args)
+                           out_teams_dir, category_label, config=args,
+                           avg_df_raw=avg_df)
 
         print(f"[INFO] Rendering cluster graphs...")
         render_cluster_graphs(zfilt_df, freq_map, sess_count, in_cluster_fp,
