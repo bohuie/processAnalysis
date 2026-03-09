@@ -81,12 +81,83 @@ GROQ_API_KEY=gsk_your_groq_api_key_here
 GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional
 ```
 
-**That's it!** No FILE_SOURCE or FOLDER_SOURCE needed — the pipeline handles both datasets automatically.
-
 **Key Points:**
 - `GITHUB_TOKEN` is **required** for data extraction
 - `AI_MODE` controls which LLM backend to use
 - Everything else is automatic
+
+---
+
+### LLM Setup and AI_MODE Toggle
+
+This project uses an **LLM for analyzing code structure and PR communications**. You can choose between:
+
+- **Offline mode** (AI_MODE=offline): Uses local Ollama with `llama3.2:3b`
+- **Online mode** (AI_MODE=online): Uses Groq Cloud API for faster processing
+
+#### Choose Your Mode
+
+Set `AI_MODE` in your `.env` file:
+
+```bash
+# .env file
+AI_MODE=offline    # Use local Ollama (default, no API key needed)
+# OR
+AI_MODE=online     # Use Groq Cloud API (requires GROQ_API_KEY)
+```
+
+#### Option 1: Offline Mode (AI_MODE=offline) — Local Ollama
+
+**Advantages:** No API costs, works without internet, privacy-friendly
+**Requirements:** More local compute, slower than Groq
+
+**Setup steps:**
+
+1. **Install Ollama** from [ollama.com/download](https://ollama.com/download)
+
+2. **Pull the model:**
+  ```bash
+  ollama pull llama3.2:3b
+  ```
+
+3. **Start the Ollama server** (keep running in background):
+  ```bash
+  ollama serve
+  ```
+  The server will listen on `http://localhost:11434` by default.
+
+4. **Set in .env:**
+  ```bash
+  AI_MODE=offline
+  ```
+
+#### Option 2: Online Mode (AI_MODE=online) — Groq Cloud API
+
+**Advantages:** Faster processing, lower local resource usage
+**Requirements:** Groq API key, internet connection, may have API costs
+
+**Setup steps:**
+
+1. **Create a Groq account** at [console.groq.com](https://console.groq.com)
+
+2. **Generate an API key:**
+  - Go to [console.groq.com/keys](https://console.groq.com/keys)
+  - Click "Create API Key"
+  - Copy the key
+
+3. **Add to .env:**
+  ```bash
+  AI_MODE=online
+  GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
+  GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional, this is the default
+  ```
+
+#### Where AI_MODE is Used
+
+The `AI_MODE` toggle is used in:
+- **Event Labelling → CodeStructure_Branching**: When running `python -m event_labelling.CodeStructure_Branching.main`
+  - Uses LLM to analyze branch names and PR structure
+  - Outputs labeled CSVs to `data/graph_labels/clean/`
 
 ---
 
@@ -146,104 +217,12 @@ GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional
    - Clusters teams by similarity
    - Visualizes patterns as graphs
 
-### Key Design Decisions
 
-**Automatic Dual-Dataset Processing**
-- No toggle variables needed (FILE_SOURCE, FOLDER_SOURCE removed)
-- Both branching and pr_labels are processed in one run
-- Outputs go to separate folders, never conflict
-
-**Per-Team Markov Chains**
-- Each PR = one "session"
-- Events in a PR = sequence of states (opened → reviewed → merged)
-- We model: "After a review, what happens next?"
-- This captures how teams actually work, not just metrics
-
-**LLM-Based Categorization**
-- Branch names: "feature/", "bugfix/", "hotfix/" → categorize intent
-- PR descriptions: analyze quality and clarity
-- Makes patterns more interpretable than raw metrics
-
----
-
-## LLM Setup and AI_MODE Toggle
-
-This project uses an **LLM for analyzing code structure and PR communications**. You can choose between:
-
-- **Offline mode** (AI_MODE=offline): Uses local Ollama with `llama3.2:3b`
-- **Online mode** (AI_MODE=online): Uses Groq Cloud API for faster processing
-
-### Choose Your Mode
-
-Set `AI_MODE` in your `.env` file:
-
-```bash
-# .env file
-AI_MODE=offline    # Use local Ollama (default, no API key needed)
-# OR
-AI_MODE=online     # Use Groq Cloud API (requires GROQ_API_KEY)
-```
-
-### Option 1: Offline Mode (AI_MODE=offline) — Local Ollama
-
-**Advantages:** No API costs, works without internet, privacy-friendly
-**Requirements:** More local compute, slower than Groq
-
-**Setup steps:**
-
-1. **Install Ollama** from [ollama.com/download](https://ollama.com/download)
-
-2. **Pull the model:**
-   ```bash
-   ollama pull llama3.2:3b
-   ```
-
-3. **Start the Ollama server** (keep running in background):
-   ```bash
-   ollama serve
-   ```
-   The server will listen on `http://localhost:11434` by default.
-
-4. **Set in .env:**
-   ```bash
-   AI_MODE=offline
-   ```
-
-### Option 2: Online Mode (AI_MODE=online) — Groq Cloud API
-
-**Advantages:** Faster processing, lower local resource usage
-**Requirements:** Groq API key, internet connection, may have API costs
-
-**Setup steps:**
-
-1. **Create a Groq account** at [console.groq.com](https://console.groq.com)
-
-2. **Generate an API key:**
-   - Go to [console.groq.com/keys](https://console.groq.com/keys)
-   - Click "Create API Key"
-   - Copy the key
-
-3. **Add to .env:**
-   ```bash
-   AI_MODE=online
-   GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   GROQ_MODEL_NAME=llama-3.1-8b-instant  # optional, this is the default
-   ```
-
-### Where AI_MODE is Used
-
-The `AI_MODE` toggle is used in:
-- **Event Labelling → CodeStructure_Branching**: When running `python -m event_labelling.CodeStructure_Branching.main`
-  - Uses LLM to analyze branch names and PR structure
-  - Outputs labeled CSVs to `data/graph_labels/clean/`
-
----
-
-## How to Run
+### 5. Run the Pipeline (main.py)
 
 The project provides a complete end-to-end pipeline with **zero environment variable configuration needed** (except `GITHUB_TOKEN` and `AI_MODE`).
 
-### The Easy Way: Run Everything at Once
+#### Run Everything at Once
 
 ```bash
 # Just run main.py - it handles everything!
@@ -261,7 +240,7 @@ That's it. `main.py` automatically:
 - Branching analysis: `data/outputs/branching/`
 - PR analysis: `data/outputs/pr/`
 
-### The Modular Way: Run Steps Individually
+#### The Modular Way: Run Steps Individually
 
 If you prefer to run steps separately:
 
@@ -314,83 +293,6 @@ Each directory contains:
 
 ---
 
-## Quick Reference: Common Tasks
-
-### "I just cloned the repo" — Complete First Run
-
-```bash
-# 1. Set up environment
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# 2. Create .env with your GitHub token
-cat > .env << EOF
-GITHUB_TOKEN=ghp_your_token_here
-AI_MODE=offline
-EOF
-
-# 3. (Optional) Start Ollama if using offline mode
-ollama serve &
-
-# 4. Run the complete pipeline!
-python main.py
-```
-
-Done. Both branching and pr_labels analysis will be generated.
-
-### "I only want to run one step"
-
-```bash
-# Just extract data
-python scripts/app.py
-
-# Just label branching patterns
-python -m event_labelling.CodeStructure_Branching.main
-
-# Just label PR communications
-python -m event_labelling.PR.pr_label
-
-# Just generate process models (both datasets)
-python -m process_model.transition_edges
-python -m process_model.zscore_calculation
-python -m process_model.clustering
-python -m process_model.graphing
-```
-
-### "I want to switch from Ollama to Groq"
-
-```bash
-# 1. Get your Groq API key from console.groq.com/keys
-# 2. Update .env
-cat > .env << EOF
-GITHUB_TOKEN=ghp_your_token
-AI_MODE=online
-GROQ_API_KEY=gsk_your_key_here
-EOF
-
-# 3. Re-run labeling
-python -m event_labelling.CodeStructure_Branching.main
-python -m event_labelling.PR.pr_label
-```
-
-### "I want to understand what each output file means"
-
-**Branching Analysis (`data/outputs/branching/`):**
-- `team_transition_edges_overall.csv` - All state transitions observed (aggregated across all PRs)
-- `team_transition_edges_avg_session.csv` - Average transitions per PR session (normalized)
-- `behavior_clusters_branching.csv` - Cluster assignment for each team
-- `graphs/team_*.pdf` - Markov chain visualizations per team
-- `graphs/cluster_*.pdf` - Aggregate behaviors per cluster
-
-**PR Analysis (`data/outputs/pr/`):**
-- Same structure but analyzing PR communication patterns instead of code branching
-
-**Both datasets:**
-- `team_event_frequency.csv` - Event counts per team
-- `team_transition_sessions_count.csv` - Number of PR sessions analyzed
-
----
 
 ## Environment Variables Reference
 
@@ -410,86 +312,7 @@ This is the **complete list** of all environment variables used by the project. 
 | `GROQ_API_KEY` | Groq Cloud API key (only needed if `AI_MODE=online`) | API key from console.groq.com | (empty) |
 | `GROQ_MODEL_NAME` | Which Groq model to use | `llama-3.1-8b-instant`, `mixtral-8x7b-32768`, etc. | `llama-3.1-8b-instant` |
 
-### Process Model Variables (Must be paired)
 
-| Variable | Purpose | Options | Pairing Rule |
-|----------|---------|---------|--------------|
-| `FILE_SOURCE` | Input data source for `transition_edges.py` | `branching` or `pr_labels` | Must match `FOLDER_SOURCE` |
-| `FOLDER_SOURCE` | Output folder for all process_model scripts | `branching` or `pr` | Must match `FILE_SOURCE` |
-
-**Pairing Examples:**
-```bash
-# Valid: Branching mode
-FILE_SOURCE=branching
-FOLDER_SOURCE=branching
-
-# Valid: PR mode
-FILE_SOURCE=pr_labels
-FOLDER_SOURCE=pr
-
-# INVALID: Mismatched (don't do this!)
-FILE_SOURCE=branching
-FOLDER_SOURCE=pr  # INVALID - Don't do this!
-```
-
----
-
-## Utility Modules
-
-### Bot Filter (`src/utils/botFilter.py`)
-
-A reusable utility module for identifying and removing automated bot accounts from GitHub data. This utility is critical for ensuring analysis metrics reflect genuine human collaboration, not bot activity.
-
-**What It Does:**
-- Detects common bot patterns (dependabot, renovate, GitHub Actions, Codecov, etc.)
-- Removes bot accounts from any DataFrame column containing usernames
-- Works with multiple username columns (author, reviewer, merged_by, etc.)
-- Provides custom pattern support for organization-specific bots
-- Logs filtering statistics for transparency
-
-**Why You Need It:**
-GitHub repos contain noise from dependency bots, CI/CD automation, and security scanners. These skew collaboration metrics. This utility filters them out so your analysis focuses on **real team activity**.
-
-**Quick Example:**
-```python
-from src.utils.botFilter import remove_bot_prs, filter_bots_from_multiple_columns
-import pandas as pd
-
-# Load PR data
-prs_df = pd.read_csv('data/prs.csv')  # 1500 records
-
-# Remove bot PRs (uses 'pr_author' column)
-clean_prs = remove_bot_prs(prs_df)
-# Output: [INFO] Filtered out 47 bot records from 1500 total (3.1%)
-
-# Filter multiple columns (author + reviewer)
-clean_prs = filter_bots_from_multiple_columns(
-    clean_prs,
-    username_columns=['pr_author', 'pr_reviewer'],
-    filter_mode='any'
-)
-# Result: 1430 human-only records ready for analysis
-```
-
-**Core Functions:**
-| Function | Purpose |
-|----------|---------|
-| `is_bot_username(username)` | Check if single username is a bot |
-| `filter_bots_from_dataframe(df, username_column)` | Remove bots from one column |
-| `filter_bots_from_multiple_columns(df, columns)` | Remove bots from multiple columns |
-| `get_bot_usernames(df, username_column)` | List all detected bots |
-| `remove_bot_prs(df)` | Shortcut for PR data |
-| `remove_bot_commits(df)` | Shortcut for commit data |
-
-**For Detailed Information:**
-See [documentation/bot_filter.md](documentation/bot_filter.md) for:
-- Complete API reference
-- Real-world workflow examples
-- Custom pattern configuration
-- Troubleshooting guide
-- Performance notes
-
----
 
 ## Output
 
@@ -532,7 +355,7 @@ processAnalysis/
 │   │   ├── label_refactor_size.py
 │   │   ├── label_repo_status.py
 │   │   ├── label_pr_status.py
-│   │   └── clean_lables.py             # Optional PR-level-only cleaner
+│   │   └── clean_labels.py             # Optional PR-level-only cleaner
 │   ├── PR/
 │   │   ├── pr_label.py
 │   │   ├── helpers_pr.py
@@ -585,48 +408,6 @@ Then set `ANONYMIZE = True` in the relevant scripts.
 
 ---
 
-## Understanding the Outputs
-
-### After Running `python main.py`:
-
-**`data/outputs/branching/`** — Code & Branching Analysis
-- `team_transition_edges_overall.csv` - All branch state transitions observed
-  - Columns: team_name, team_number, from (state), to (state), count (frequency), prob (probability)
-  - Example: "feature_development" → "code_review" happened 47 times for team-7
-  
-- `team_transition_edges_avg_session.csv` - Average per-PR session (normalized)
-  - Same structure but averaged over number of sessions
-  - Better for comparison (accounts for different team sizes)
-  
-- `team_transition_edges_avg_session_zscores.csv` - Anomaly detection
-  - Z-score normalized: which transitions are unusual?
-  - Values >1.645 are statistically significant
-  
-- `behavior_clusters_branching.csv` - Team groupings
-  - team_number, cluster_id, silhouette score
-  - Teams with same cluster_id have similar branching behaviors
-  
-- `graphs/team_*.pdf` - Per-team Markov chain visualization
-  - Shows state transitions as a directed graph
-  - Edge thickness = frequency
-  
-- `graphs/cluster_*.pdf` - Aggregate patterns per cluster
-  - Average behavior of all teams in that cluster
-
-**`data/outputs/pr/`** — PR Communications Analysis
-- Same structure as branching, but analyzing PR review patterns instead
-
-### Interpreting Clusters
-
-**High Silhouette Score (>0.5)** = Well-separated, distinct cluster
-**Low Silhouette Score (<0.3)** = Somewhat arbitrary grouping
-
-Teams in the same cluster have similar:
-- Decision-making patterns (code review timelines)
-- Risk tolerance (how risky are merged PRs?)
-- Collaboration style (how much review discussion?)
-
----
 
 ## Troubleshooting
 
@@ -676,9 +457,6 @@ python -m process_model.transition_edges
 - **Anonymization:** Update paths in scripts if using anonymized datasets.
 - **Working Directory:** All scripts assume execution from the project root directory.
 - **Ollama Dependency:** Code structure analysis requires a running Ollama server (or Groq API key).
-- **No Environment Toggle System:** FILE_SOURCE and FOLDER_SOURCE are no longer needed — the pipeline handles both datasets automatically.
-
----
 
 ## Testing
 

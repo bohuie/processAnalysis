@@ -1,6 +1,7 @@
 import os
 import pandas as pd
 import numpy as np
+from typing import Optional
 from dotenv import load_dotenv
 from src.utils.connect_groq import connect_groq              # LLM client (Groq)
 from src.utils.ollama_offline import connect_ollama_offline  # LLM client (Offline Ollama)
@@ -17,8 +18,8 @@ else:
 
 def classify_constructiveness(
     main_comment: str,
-    inline_bodies: list[str] | None = None,
-    other_review_bodies: list[str] | None = None,
+    inline_bodies: Optional[list[str]] = None,
+    other_review_bodies: Optional[list[str]] = None,
 ) -> str:
     """
     Classify overall review behaviour (for a single reviewer on a PR) as
