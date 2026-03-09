@@ -1,81 +1,103 @@
 import os
-from pathlib import Path
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
-from dotenv import load_dotenv
-
-# ============================================================
-# CONFIGURATION SWITCH - Choose which folder to process
-# ============================================================
-# Set to "branching" or "pr"
-# Can be set via environment variable: FOLDER_SOURCE=branching python ...
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
-
-# ============================================================
-# CONFIGURATION SWITCH - Choose which files to process
-# ============================================================
-# Set to "branching" or "pr_labels"
-# Can be set via environment variable: FILE_SOURCE=branching python ...
-script_path = Path(__file__).resolve()
-print(f"[DEBUG] Script location: {script_path}")
-
-env_path = script_path.parent.parent / '.env'
-print(f"[DEBUG] Looking for .env at: {env_path}")
-print(f"[DEBUG] .env exists: {env_path.exists()}")
-
-# Load it
-load_dotenv(dotenv_path=env_path)
-FOLDER_SOURCE = os.getenv("FOLDER_SOURCE")  # default: "branching"
-# ============================================================
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-# Determine input/output paths based on FOLDER_SOURCE
-if FOLDER_SOURCE == "branching":
-    DATA_DIR = os.path.join(ROOT, "data", "outputs", "branching")
-    CLUSTER_SUFFIX = "branching"
-    print("[CONFIG] Processing branching data from data/outputs/branching/")
-elif FOLDER_SOURCE == "pr":
-    DATA_DIR = os.path.join(ROOT, "data", "outputs", "pr")
-    CLUSTER_SUFFIX = "pr"
-    print("[CONFIG] Processing PR data from data/outputs/pr/")
-else:
-    raise ValueError(f"Invalid FOLDER_SOURCE: {FOLDER_SOURCE}. Must be 'branching' or 'pr'")
+# Process ALL datasets every run
+CONFIGS = {
+    "branching": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
+        "cluster_suffix": "branching",
+    },
+    "pr": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
+        "cluster_suffix": "pr",
+    },
+    "communication": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "communication"),
+        "cluster_suffix": "communication",
+    },
+}
 
-IN_FP = os.path.join(DATA_DIR, "team_transition_edges_avg_session_zscores.csv")
-OUT_FP = os.path.join(DATA_DIR, f"behavior_clusters_{CLUSTER_SUFFIX}.csv")
+Z_THRESHOLD = 1.645  # 90% confidence (use 1.96 for 95%)
 
-Z_THRESHOLD = 1.645  # pick in clustering, not zscore script
+
+def filter_edges_by_zscore(df: pd.DataFrame, cutoff: float) -> pd.DataFrame:
+    """Return only edges with |z_score| >= cutoff."""
+    if "z_score" not in df.columns:
+        raise ValueError("Expected 'z_score' column in input; zscore_calculation.py should generate it.")
+    return df[df["z_score"].abs() >= cutoff].copy()
+
 
 def build_team_matrix(df: pd.DataFrame, z_threshold: float):
-    df = df.copy()
+    """
+    Build team -> vector matrix (features = all possible (from,to) pairs),
+    using only edges that pass the z-score filter.
 
-    # vocab built from FULL df for stability
+    Returns:
+      teams (list[str]),
+      pairs (list[tuple[str,str]]),
+      X (np.ndarray),
+      df_filt (DataFrame) filtered edges
+    """
+    df = df.copy()
+    df["team_number"] = df["team_number"].astype(str)
+    df["from"] = df["from"].astype(str)
+    df["to"] = df["to"].astype(str)
+    df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
+
+    # vocab from FULL df for stability
     pairs = sorted(set(zip(df["from"], df["to"])))
     pair_to_idx = {p: i for i, p in enumerate(pairs)}
 
-    teams = sorted(df["team_number"].astype(str).unique(),
-                   key=lambda x: int(x) if x.isdigit() else 999999)
+    teams = sorted(df["team_number"].unique(), key=lambda x: int(x) if x.isdigit() else 999999)
     X = np.zeros((len(teams), len(pairs)), dtype=float)
 
-    # apply threshold here
-    if "z_score" in df.columns:
-        df = df[df["z_score"] >= z_threshold].copy()
-    else:
-        raise ValueError("Expected 'z_score' column in input; zscore_calculation.py should generate it.")
+    # filter edges by zscore
+    df_filt = filter_edges_by_zscore(df, cutoff=z_threshold)
 
     for ti, team in enumerate(teams):
-        g = df[df["team_number"].astype(str) == team]
+        g = df_filt[df_filt["team_number"] == team]
         for _, r in g.iterrows():
             idx = pair_to_idx.get((r["from"], r["to"]))
             if idx is not None:
                 X[ti, idx] = float(r["count"])
 
-    return teams, pairs, X
+    return teams, pairs, X, df_filt
+
+
+def compute_elbow_scores(X: np.ndarray, k_min=2, k_max=10) -> dict:
+    n = X.shape[0]
+    k_max = min(k_max, n - 1)
+    if k_max < k_min:
+        return {"k": [], "inertia": []}
+
+    elbow_data = {"k": [], "inertia": []}
+    for k in range(k_min, k_max + 1):
+        km = KMeans(n_clusters=k, n_init=25, random_state=42)
+        km.fit(X)
+        elbow_data["k"].append(k)
+        elbow_data["inertia"].append(km.inertia_)
+    return elbow_data
+
+
+def plot_elbow_scores(elbow_scores: dict, output_path: str, title: str) -> None:
+    if not elbow_scores or not elbow_scores.get("k"):
+        return
+    plt.figure(figsize=(6, 4))
+    plt.plot(elbow_scores["k"], elbow_scores["inertia"], marker="o")
+    plt.title(title)
+    plt.xlabel("Number of clusters (k)")
+    plt.ylabel("Inertia")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=200)
+    plt.close()
 
 
 def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
@@ -84,8 +106,10 @@ def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
         return 2, None
 
     k_max = min(k_max, n - 1)
-    best_k, best_score = 2, -1
+    if k_max < k_min:
+        return 2, None
 
+    best_k, best_score = 2, -1
     for k in range(k_min, k_max + 1):
         km = KMeans(n_clusters=k, n_init=25, random_state=42)
         labels = km.fit_predict(X)
@@ -98,47 +122,104 @@ def choose_best_k(X: np.ndarray, k_min=2, k_max=10):
 
     return best_k, best_score
 
-def main():
-    if not os.path.exists(IN_FP):
-        raise FileNotFoundError(
-            f"Missing required input: {IN_FP}\n"
-            f"Run zscore_calculation.py first with FOLDER_SOURCE='{FOLDER_SOURCE}'"
-        )
-    
-    print(f"[INFO] Loading data from: {IN_FP}")
-    df = pd.read_csv(IN_FP, low_memory=False)
-    
-    print("[INFO] Building team matrix...")
-    teams, pairs, X = build_team_matrix(df, z_threshold=Z_THRESHOLD)
 
+def process_dataset(dataset_name: str, config: dict) -> None:
+    data_dir = config["output_folder"]
+    suffix = config["cluster_suffix"]
+
+    in_fp = os.path.join(data_dir, "team_transition_edges_avg_session_zscores.csv")
+    out_fp = os.path.join(data_dir, f"behavior_clusters_{suffix}.csv")
+    matrix_out_fp = os.path.join(data_dir, f"team_transition_matrix_{suffix}.csv")
+    filtered_edges_out_fp = os.path.join(data_dir, f"team_transition_edges_avg_session_zfiltered_{suffix}.csv")
+
+    if not os.path.exists(in_fp):
+        print(f"[SKIP] Missing input: {in_fp}")
+        print("       Run zscore_calculation.py first")
+        return
+
+    print(f"[INFO] Loading data from: {in_fp}")
+    df = pd.read_csv(in_fp, low_memory=False)
+
+    required_cols = {"team_number", "from", "to", "count", "z_score"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        print(f"[ERROR] Missing columns in {in_fp}: {missing}")
+        return
+
+    print(f"[INFO] Building team matrix (|z| >= {Z_THRESHOLD})...")
+    teams, pairs, X, df_filt = build_team_matrix(df, z_threshold=Z_THRESHOLD)
+
+    # drop all-zero teams (no edges survive filtering)
     nonzero_mask = (X.sum(axis=1) > 0)
-    teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
-    X = X[nonzero_mask]
-    
+    kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
     dropped = int((~nonzero_mask).sum())
     if dropped:
-        print(f"[INFO] Dropped {dropped} teams with all-zero vectors at z ≥ {Z_THRESHOLD}")
+        print(f"[INFO] Dropped {dropped} teams with all-zero vectors at |z| ≥ {Z_THRESHOLD}")
+    X = X[nonzero_mask]
 
+    # write z-filtered edges for kept teams
+    df_filt_kept = df_filt.copy()
+    df_filt_kept["team_number"] = df_filt_kept["team_number"].astype(str)
+    df_filt_kept = df_filt_kept[df_filt_kept["team_number"].isin(set(kept_teams))].copy()
 
+    cols_first = ["team_number", "from", "to", "count", "z_score"]
+    remaining = [c for c in df_filt_kept.columns if c not in cols_first]
+    df_filt_kept = df_filt_kept[cols_first + remaining]
+    df_filt_kept.to_csv(filtered_edges_out_fp, index=False)
+    print(f"[OK] Wrote z-filtered edges: {filtered_edges_out_fp}")
+
+    # write transition matrix
+    col_names = [f"{a}->{b}" for (a, b) in pairs]
+    matrix_df = pd.DataFrame(X, index=kept_teams, columns=col_names)
+    matrix_df.index.name = "team_number"
+    matrix_df.to_csv(matrix_out_fp)
+    print(f"[OK] Wrote transition matrix: {matrix_out_fp}")
+
+    # if not enough teams to cluster
     if X.shape[0] < 2:
-        out = pd.DataFrame({"team_number": teams, "cluster_id": [0] * len(teams)})
-        out.to_csv(OUT_FP, index=False)
-        print(f"[OK] Wrote: {OUT_FP} (not enough teams to cluster)")
+        out = pd.DataFrame({"team_number": kept_teams, "cluster_id": [0] * len(kept_teams)})
+        out.to_csv(out_fp, index=False)
+        print(f"[OK] Wrote: {out_fp} (not enough teams to cluster)")
         return
 
     print("[INFO] Performing clustering...")
     best_k, best_sil = choose_best_k(X)
+    elbow_scores = compute_elbow_scores(X) if X.shape[0] >= 3 else {"k": [], "inertia": []}
+
     km = KMeans(n_clusters=best_k, n_init=25, random_state=42)
     clusters = km.fit_predict(X)
 
-    out = pd.DataFrame({
-        "team_number": teams,
-        "cluster_id": clusters,
-        "k_used": best_k,
-        "silhouette": best_sil if best_sil is not None else np.nan,
-    })
-    out.to_csv(OUT_FP, index=False)
-    print(f"[OK] Wrote: {OUT_FP}")
+    out = pd.DataFrame(
+        {
+            "team_number": kept_teams,
+            "cluster_id": clusters,
+            "k_used": best_k,
+            "silhouette": best_sil if best_sil is not None else np.nan,
+        }
+    )
+    out.to_csv(out_fp, index=False)
+    print(f"[OK] Wrote: {out_fp}")
+
+    # elbow outputs (optional)
+    if elbow_scores.get("k"):
+        elbow_fp = os.path.join(data_dir, f"elbow_scores_{suffix}.csv")
+        pd.DataFrame(elbow_scores).to_csv(elbow_fp, index=False)
+        print(f"[OK] Wrote: {elbow_fp}")
+
+        elbow_png = os.path.join(data_dir, f"elbow_plot_{suffix}.png")
+        plot_elbow_scores(elbow_scores, elbow_png, title=f"Elbow Plot ({suffix})")
+        print(f"[OK] Wrote: {elbow_png}")
+    else:
+        print("[INFO] Skipping elbow CSV/plot (no valid k range).")
+
+
+def main():
+    for dataset_name, config in CONFIGS.items():
+        print(f"\n{'='*70}")
+        print(f"Processing: {dataset_name}")
+        print(f"{'='*70}")
+        process_dataset(dataset_name, config)
+
 
 if __name__ == "__main__":
     main()
