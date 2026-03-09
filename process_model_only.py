@@ -1,7 +1,6 @@
 import os
 import sys
 from pathlib import Path
-import pandas as pd
 from dotenv import load_dotenv
 
 # Load .env if it exists
@@ -13,21 +12,7 @@ from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
 from process_model.clustering import main as run_clustering
 from process_model.graphing import main as run_graphing
-
-
-def _count_teams_in_outputs(output_dir: str) -> int:
-    sessions_fp = os.path.join(output_dir, "team_transition_sessions_count.csv")
-    if not os.path.exists(sessions_fp):
-        return 0
-    try:
-        df = pd.read_csv(sessions_fp, low_memory=False)
-        if "team_number" in df.columns:
-            return df["team_number"].nunique()
-        if "team_name" in df.columns:
-            return df["team_name"].nunique()
-        return len(df)
-    except Exception:
-        return 0
+from analysis import main as run_analysis
 
 
 # Continue with labeling steps
@@ -60,27 +45,19 @@ except Exception as e:
     print(f"   ⚠️  Transition edges error: {e}\n")
 
 if transition_ok:
-    branching_count = _count_teams_in_outputs(os.path.join("data", "outputs", "branching"))
-    pr_count = _count_teams_in_outputs(os.path.join("data", "outputs", "pr"))
-    if min(branching_count, pr_count) >= 3:
-        try:
-            print("   • Computing z-scores...")
-            run_zscore()
-            print("   ✓ Finished z-scores\n")
-        except Exception as e:
-            print(f"   ⚠️  Z-score error: {e}\n")
+    try:
+        print("   • Computing z-scores...")
+        run_zscore()
+        print("   ✓ Finished z-scores\n")
+    except Exception as e:
+        print(f"   ⚠️  Z-score error: {e}\n")
 
-        try:
-            print("   • Computing clusters...")
-            run_clustering()
-            print("   ✓ Finished clustering\n")
-        except Exception as e:
-            print(f"   ⚠️  Clustering error: {e}\n")
-    else:
-        print(
-            "   [SKIP] Skipping z-scores and clustering (need >= 3 teams per dataset). "
-            f"branching={branching_count}, pr={pr_count}\n"
-        )
+    try:
+        print("   • Computing clusters...")
+        run_clustering()
+        print("   ✓ Finished clustering\n")
+    except Exception as e:
+        print(f"   ⚠️  Clustering error: {e}\n")
 
 try:
     print("   • Generating graphs...")
@@ -89,10 +66,20 @@ try:
 except Exception as e:
     print(f"   ⚠️  Graph generation error: {e}\n")
 
+# Run team-level analysis
+print("\n📊 Step 4: Team-Level Analysis")
+try:
+    print("   • Computing team statistics...")
+    run_analysis()
+    print("   ✓ Finished analysis\n")
+except Exception as e:
+    print(f"   ⚠️  Analysis error: {e}\n")
+
 print("=" * 70)
 print("[COMPLETE] Pipeline Complete!")
 print("=" * 70)
 print("\nOutput locations:")
 print("  • Branching analysis: data/outputs/branching/")
 print("  • PR analysis: data/outputs/pr/")
+print("  • Team statistics: data/analysis/")
 print("  • Both datasets processed automatically - no environment variables needed!")
