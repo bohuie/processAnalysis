@@ -6,7 +6,6 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
-# Add parent directory to path to enable imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from process_model.graphing import (
@@ -14,9 +13,6 @@ from process_model.graphing import (
     load_event_freq_map,
     load_sessions_count_map,
     build_markov_graph,
-    build_edge_idf_map,
-    score_team_edges,
-    prune_team_edges_distinctive,
     repair_connectivity,
     fix_orphans,
     _DSU,
@@ -82,147 +78,107 @@ def _make_graph(edges):
     return G
 
 
-def _make_teams_df(teams_edges):
-    """Build a multi-team DataFrame from {team_id: [(u, v, count), ...]}."""
-    rows = []
-    for team, edges in teams_edges.items():
-        for u, v, c in edges:
-            rows.append({"team_number": str(team), "from": str(u),
-                         "to": str(v), "count": c})
-    return pd.DataFrame(rows)
-
-
 # =============================================================================
-# TestIdfPruning -- 4 required tests
+# TestConnectivityRepair -- structural guarantee tests (Pass 2 + 3)
 # =============================================================================
 
-class TestIdfPruning:
+class TestConnectivityRepair:
     """
-    Tests for the cross-team IDF distinctiveness pruning pipeline.
+    Tests for repair_connectivity (Pass 2) and fix_orphans (Pass 3).
+    These are weight-based, pipeline-agnostic structural guarantees.
     """
 
     # ------------------------------------------------------------------
-    # Test 1: shared edge gets lower IDF; unique edge higher IDF and kept
+    # Test 1: repair_connectivity reconnects two disjoint components
     # ------------------------------------------------------------------
-    def test_shared_edge_lower_idf_unique_edge_kept(self):
+    def test_repair_connects_two_components(self):
         """
-        Two teams. Edge A->B appears in both (df=2, low IDF).
-        Edge A->C appears only in Team 1 (df=1, high IDF).
-
-        For Team 1 (top_k=1), score = prob * idf.
-        A->C wins because higher IDF lifts its score above A->B
-        even though both have the same raw count.
-        """
-        teams_df = _make_teams_df({
-            "1": [("A", "B", 5), ("A", "C", 5)],
-            "2": [("A", "B", 5)],
-        })
-        idf_map, N = build_edge_idf_map(teams_df, min_count=2)
-        assert N == 2
-
-        # A->B present in 2 teams: idf = log(3/3)+1 = 1.0
-        # A->C present in 1 team:  idf = log(3/2)+1 > 1.0
-        idf_ab = idf_map.get(("A", "B"), 1.0)
-        idf_ac = idf_map.get(("A", "C"), 1.0)
-        assert idf_ab == pytest.approx(math.log(3 / 3) + 1, rel=1e-6)
-        assert idf_ac > idf_ab
-
-        # Score Team 1's graph -- A->C must outscore A->B
-        G = _make_graph([("A", "B", 5), ("A", "C", 5)])
-        scores = score_team_edges(G, idf_map, strength_mode="prob")
-        assert scores[("A", "C")] > scores[("A", "B")]
-
-        # top_k=1: only A->C kept (higher score)
-        keep = prune_team_edges_distinctive(G, scores, top_k=1)
-        assert ("A", "C") in keep
-        assert ("A", "B") not in keep
-
-    # ------------------------------------------------------------------
-    # Test 2: connectivity repair reconnects components with best bridge
-    # ------------------------------------------------------------------
-    def test_connectivity_repair_reconnects_with_best_bridge(self):
-        """
-        After Pass 1, two clusters are disconnected.
-        Pass 2 adds the highest-score bridge to reconnect.
-
-        Cluster LEFT:  S->A (high score kept), S->B (pruned)
-                       A->Z (A's top-1, kept -- keeps A from being dead end)
-                       A->Y (pruned -- bridge candidate, score=0.1)
-        Cluster RIGHT: X->Y (kept as top-1 of X)
-        Bridge:        S->X (score=0.3, best bridge)
+        Graph has two disconnected clusters: {S, A} and {X, Y}.
+        Only edges within each cluster are in keep_set initially.
+        repair_connectivity must add the highest-weight bridge S->X.
         """
         G = _make_graph([
-            ("S", "A", 100), ("S", "B", 1),
-            ("A", "Z", 60),  ("A", "Y", 5),
-            ("X", "Y", 80),  ("X", "W", 2),
-            ("S", "X", 30),
+            ("S", "A", 100),
+            ("X", "Y", 80),
+            ("S", "X", 30),   # bridge
         ])
-
-        # Assign IDF so S->X has a high score as a bridge candidate
-        idf_map = {("S", "X"): 2.0, ("A", "Y"): 1.1}
-        scores = score_team_edges(G, idf_map, strength_mode="prob")
-
-        # Pass 1: keep top-1 per source
-        keep = prune_team_edges_distinctive(G, scores, top_k=1)
-
-        # Pass 2: best bridge S->X should be added
+        # Start with only within-cluster edges
+        keep_set = {("S", "A"), ("X", "Y")}
         all_nodes = set(G.nodes())
-        keep, n_before, n_after, bridges = repair_connectivity(
-            keep, G, scores, all_nodes
-        )
-        assert ("S", "X") in keep
-        assert n_after <= n_before  # components can only shrink
+
+        keep_set, n_before, n_after, bridges = repair_connectivity(keep_set, G, all_nodes)
+
+        assert n_before > 1, "expected 2 components before repair"
+        assert n_after == 1, "expected 1 component after repair"
+        assert ("S", "X") in keep_set
+        assert bridges >= 1
 
     # ------------------------------------------------------------------
-    # Test 3: orphan fix restores incident edge for isolated node
+    # Test 2: repair_connectivity is a no-op when already connected
     # ------------------------------------------------------------------
-    def test_orphan_fix_restores_incident_edge(self):
+    def test_repair_noop_when_connected(self):
         """
-        Node O is only reachable via A->O (weak, pruned in Pass 1).
-        A->C is kept (top-1 of A). O becomes orphaned.
-        Pass 3 must restore A->O so O has at least one incident edge.
+        If all nodes are already in one component, no edges should be added.
+        """
+        G = _make_graph([("A", "B", 10), ("B", "C", 5)])
+        keep_set = {("A", "B"), ("B", "C")}
+        all_nodes = set(G.nodes())
+
+        keep_set, n_before, n_after, bridges = repair_connectivity(keep_set, G, all_nodes)
+
+        assert n_before == 1
+        assert n_after == 1
+        assert bridges == 0
+
+    # ------------------------------------------------------------------
+    # Test 3: fix_orphans restores incident edge for isolated node
+    # ------------------------------------------------------------------
+    def test_fix_orphans_restores_isolated_node(self):
+        """
+        Node O is not in any kept edge. fix_orphans must restore its
+        strongest incident edge.
         """
         G = _make_graph([
-            ("S", "A", 100), ("S", "B", 1),
-            ("A", "C", 80),  ("A", "O", 2),
+            ("S", "A", 100),
+            ("A", "O", 5),    # O is orphaned in keep_set
         ])
-        idf_map = {}   # neutral IDF
-        scores = score_team_edges(G, idf_map, strength_mode="prob")
-
-        keep = prune_team_edges_distinctive(G, scores, top_k=1)
-        # O should not appear in kept edges after Pass 1
-        incident_p1 = {n for edge in keep for n in edge}
-        assert "O" not in incident_p1
-
-        # Pass 3
+        keep_set = {("S", "A")}
         all_nodes = set(G.nodes())
-        keep, fixes = fix_orphans(keep, G, scores, all_nodes)
+
+        keep_set, fixes = fix_orphans(keep_set, G, all_nodes)
+
         assert fixes >= 1
-        incident_p3 = {n for edge in keep for n in edge}
-        assert "O" in incident_p3
+        incident = {n for edge in keep_set for n in edge}
+        assert "O" in incident
 
     # ------------------------------------------------------------------
-    # Test 4: full pipeline is deterministic across multiple calls
+    # Test 4: fix_orphans is a no-op when there are no orphans
     # ------------------------------------------------------------------
-    def test_deterministic_output(self):
-        """
-        Multiple calls with identical input must produce identical keep_set.
-        Validates sorted(G.nodes(), key=str), IDF scoring, and all
-        sort keys in bridge/orphan selection.
-        """
+    def test_fix_orphans_noop_when_none(self):
+        """All nodes appear in keep_set -- no fixes needed."""
+        G = _make_graph([("A", "B", 10), ("B", "C", 5)])
+        keep_set = {("A", "B"), ("B", "C")}
+        all_nodes = set(G.nodes())
+
+        keep_set, fixes = fix_orphans(keep_set, G, all_nodes)
+        assert fixes == 0
+
+    # ------------------------------------------------------------------
+    # Test 5: full pipeline (Pass 2 + 3) is deterministic
+    # ------------------------------------------------------------------
+    def test_full_pipeline_deterministic(self):
+        """Multiple runs with identical input must produce identical output."""
         G = _make_graph([
             ("S", "A", 100), ("S", "B", 5), ("S", "C", 5),
             ("X", "Y", 80),  ("X", "Z", 3),
             ("S", "X", 30),  ("A", "Y", 10),
         ])
-        idf_map = {("S", "A"): 1.4, ("X", "Y"): 1.4, ("S", "X"): 1.2}
-        scores = score_team_edges(G, idf_map, strength_mode="prob")
         all_nodes = set(G.nodes())
 
         def full_pipeline():
-            keep = prune_team_edges_distinctive(G, scores, top_k=1)
-            keep, *_ = repair_connectivity(keep, G, scores, all_nodes)
-            keep, _ = fix_orphans(keep, G, scores, all_nodes)
+            keep = set(G.edges())           # start: all edges (as filtered upstream)
+            keep, *_ = repair_connectivity(keep, G, all_nodes)
+            keep, _  = fix_orphans(keep, G, all_nodes)
             return frozenset(keep)
 
         r1 = full_pipeline()
