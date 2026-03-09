@@ -173,11 +173,15 @@ def repair_connectivity(
 
     if remaining > 1:
         # Candidates come from the ORIGINAL graph, not the filtered one.
+        # Only consider edges where BOTH endpoints are in displayed_nodes
+        # so raw-only nodes are never resurrected.
         candidates = sorted(
             [
                 (u, v, data["weight"])
                 for u, v, data in G_original.edges(data=True)
                 if (u, v) not in keep_set
+                and u in all_nodes
+                and v in all_nodes
             ],
             key=lambda e: (-e[2], str(e[0]), str(e[1])),
         )
@@ -217,12 +221,15 @@ def fix_orphans(
     fixes = 0
     for node in orphans:
         # Pull candidates from the ORIGINAL graph.
+        # Only restore edges to/from nodes already in displayed_nodes.
         candidates = [
             (u, v, data["weight"])
             for u, v, data in G_original.out_edges(node, data=True)
+            if v in all_nodes
         ] + [
             (u, v, data["weight"])
             for u, v, data in G_original.in_edges(node, data=True)
+            if u in all_nodes
         ]
         if not candidates:
             continue
@@ -282,9 +289,9 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
     # Displayed graph initialised from filtered edges.
     # Bridge/orphan candidates drawn from original (unfiltered) graph.
     preserve_conn = getattr(config, "preserve_connectivity", True)
-    # all_nodes must cover both graphs so the DSU doesn't raise KeyError
-    # when G_original contains nodes that were z-score filtered out of G.
-    all_nodes     = set(G.nodes()) | set(G_original.nodes())
+    # Only displayed (filtered) nodes define the connectivity scope.
+    # We do NOT union G_original.nodes() here — raw-only nodes must not be resurrected.
+    all_nodes     = set(G.nodes())
     edges_before  = G.number_of_edges()
 
     keep_set = set(G.edges())
