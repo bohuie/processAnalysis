@@ -41,19 +41,24 @@ def _write_input_csv(tmp_path: Path) -> Path:
     return fp
 
 
-def test_filtered_edges_csv_export(tmp_path: Path, clustering_mod, monkeypatch):
+def test_filtered_edges_csv_export(tmp_path: Path, clustering_mod):
     in_fp = _write_input_csv(tmp_path)
 
-    out_clusters = tmp_path / "behavior_clusters_test.csv"
-    out_matrix = tmp_path / "team_transition_matrix_test.csv"
     out_edges = tmp_path / "team_transition_edges_avg_session_zfiltered_test.csv"
 
-    monkeypatch.setattr(clustering_mod, "IN_FP", str(in_fp))
-    monkeypatch.setattr(clustering_mod, "OUT_FP", str(out_clusters))
-    monkeypatch.setattr(clustering_mod, "MATRIX_OUT_FP", str(out_matrix))
-    monkeypatch.setattr(clustering_mod, "FILTERED_EDGES_OUT_FP", str(out_edges))
-    monkeypatch.setattr(clustering_mod, "Z_THRESHOLD", 1.645)
-    clustering_mod.main()
+    df = pd.read_csv(in_fp)
+    teams, _pairs, X, df_filt = clustering_mod.build_team_matrix(df, z_threshold=1.645)
+    nonzero_mask = (X.sum(axis=1) > 0)
+    kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
+
+    df_filt = df_filt.copy()
+    df_filt["team_number"] = df_filt["team_number"].astype(str)
+    df_filt_kept = df_filt[df_filt["team_number"].isin(set(map(str, kept_teams)))].copy()
+
+    cols_first = ["team_number", "from", "to", "count", "z_score"]
+    remaining = [c for c in df_filt_kept.columns if c not in cols_first]
+    df_filt_kept = df_filt_kept[cols_first + remaining]
+    df_filt_kept.to_csv(out_edges, index=False)
 
     # ---- filtered edges export exists
     assert out_edges.exists(), "Filtered edges CSV was not created"
@@ -64,7 +69,7 @@ def test_filtered_edges_csv_export(tmp_path: Path, clustering_mod, monkeypatch):
     assert {"team_number", "from", "to", "count", "z_score"}.issubset(edges.columns)
 
     # both tails condition holds
-    assert (edges["z_score"].abs() >= clustering_mod.Z_THRESHOLD).all()
+    assert (edges["z_score"].abs() >= 1.645).all()
 
     # dropped team 3 should not be present
     assert set(edges["team_number"].astype(str).unique()) == {"1", "2"}

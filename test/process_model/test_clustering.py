@@ -23,7 +23,7 @@ class TestClustering:
         df = pd.DataFrame(data)
         
         # Test with threshold 1.6
-        teams, pairs, X = build_team_matrix(df, z_threshold=1.6)
+        teams, pairs, X, _ = build_team_matrix(df, z_threshold=1.6)
         
         assert "1" in teams
         assert "2" in teams
