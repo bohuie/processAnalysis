@@ -5,14 +5,11 @@ import numpy as np
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-# Configuration for both datasets
+# Process ALL datasets every run
 CONFIGS = {
-    "branching": {
-        "output_folder": os.path.join(ROOT, "data", "outputs", "branching")
-    },
-    "pr": {
-        "output_folder": os.path.join(ROOT, "data", "outputs", "pr")
-    }
+    "branching": {"output_folder": os.path.join(ROOT, "data", "outputs", "branching")},
+    "pr": {"output_folder": os.path.join(ROOT, "data", "outputs", "pr")},
+    "communication": {"output_folder": os.path.join(ROOT, "data", "outputs", "communication")},
 }
 
 
@@ -36,21 +33,20 @@ def zscore_per_team(edges: pd.DataFrame, team_col: str) -> pd.DataFrame:
 
 
 def main():
-    # Process both datasets
     for dataset_name, config in CONFIGS.items():
         print(f"\n{'='*70}")
         print(f"Processing: {dataset_name}")
         print(f"{'='*70}")
-        
+
         data_dir = config["output_folder"]
         in_fp = os.path.join(data_dir, "team_transition_edges_avg_session.csv")
         out_fp = os.path.join(data_dir, "team_transition_edges_avg_session_zscores.csv")
-        
+
         if not os.path.exists(in_fp):
             print(f"[SKIP] Missing input: {in_fp}")
-            print(f"       Run transition_edges.py first")
+            print("       Run transition_edges.py first")
             continue
-        
+
         print(f"[INFO] Loading data from: {in_fp}")
         edges = pd.read_csv(in_fp, low_memory=False)
 
