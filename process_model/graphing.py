@@ -373,8 +373,8 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
             G.add_edge(a, b, weight=w)
 
     # ---- Edge pruning (z-score + connectivity repair) ----
-    z_min              = getattr(config, "z_min",               1.0)
-    top_k              = getattr(config, "top_k",               1)
+    z_min              = getattr(config, "z_threshold",         0.5)
+    top_k              = 1  # internal default; not exposed as a CLI arg
     preserve_conn      = getattr(config, "preserve_connectivity", True)
 
     if preserve_conn:
@@ -632,10 +632,8 @@ def main():
                         help="Graphviz size string (e.g. '8,5')")
     parser.add_argument("--min-edge-prob", type=float, default=0.0,
                         help="Minimum edge probability to draw (visual pruning), default: 0.0")
-    parser.add_argument("--z-min", type=float, default=1.0,
-                        help="Z-score threshold: keep outgoing edges with z >= Z_MIN (default: 1.0)")
-    parser.add_argument("--top-k", type=int, default=1,
-                        help="Always keep the top-K highest-weight outgoing edges per node (default: 1)")
+    parser.add_argument("--z-threshold", type=float, default=0.5,
+                        help="Absolute z-score cutoff for avg-session edge filtering. Default = 0.5 for readable graph output.")
     parser.add_argument("--no-preserve-connectivity", dest="preserve_connectivity",
                         action="store_false", default=True,
                         help="Disable connectivity repair (Pass 2 + 3); use raw z-score pruning only")
