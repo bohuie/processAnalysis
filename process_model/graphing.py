@@ -77,7 +77,8 @@ def load_event_freq_map(freq_fp: str) -> dict:
     if not os.path.exists(freq_fp):
         return {}
     df = pd.read_csv(freq_fp, low_memory=False)
-    if not {"team_number", "event", "count"}.issubset(df.columns):
+    required = {"team_number", "event", "count"}
+    if not required.issubset(df.columns):
         return {}
 
     df = df.copy()
