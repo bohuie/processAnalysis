@@ -240,6 +240,7 @@ class _DSU:
 
 def prune_edges_connectivity_preserving(
     G: nx.DiGraph,
+    G_original: nx.DiGraph,
     z_min: float = 1.0,
     top_k: int = 1,
     min_out_edges_to_zscore: int = 2,
@@ -250,15 +251,16 @@ def prune_edges_connectivity_preserving(
 
     Pass 1 — z-score pruning (delegates to prune_edges_by_zscore)
     Pass 2 — connectivity repair: greedily add back the minimum number of
-             original edges needed to make the pruned graph weakly connected,
-             using a DSU.  Candidate bridge edges are scored by descending
-             weight then ascending (u, v) for determinism.
-    Pass 3 — orphan guardrail: any node with zero incident edges in the kept
-             set gets its single strongest original incident edge restored.
+             original edges (from G_original) needed to make the pruned graph
+             weakly connected, using a DSU. Only considers edges where BOTH
+             endpoints are in the original displayed_nodes.
+    Pass 3 — orphan guardrail: any node in displayed_nodes with zero incident
+             edges in the kept set gets its strongest original incident edge
+             restored (again, only between nodes in displayed_nodes).
 
     Returns the set of (u, v) pairs to draw.
     """
-    all_nodes = set(G.nodes())
+    displayed_nodes = set(G.nodes())
     edges_before = G.number_of_edges()
 
     # ── PASS 1: z-score pruning ───────────────────────────────────────────
@@ -269,7 +271,7 @@ def prune_edges_connectivity_preserving(
     edges_after_pass1 = len(keep_set)
 
     # Build initial DSU from pass-1 kept edges (treating graph as undirected).
-    dsu = _DSU(all_nodes)
+    dsu = _DSU(displayed_nodes)
     for u, v in keep_set:
         dsu.union(u, v)
     n_comp_pass1 = dsu.num_components()
@@ -278,13 +280,14 @@ def prune_edges_connectivity_preserving(
     edges_added_conn = 0
     if n_comp_pass1 > 1:
         # Candidate bridges: original edges NOT already kept,
-        # whose endpoints sit in different components.
+        # whose endpoints are BOTH in displayed_nodes, and 
+        # sit in different components.
         # Sort: (-weight, u, v) for determinism on ties.
         candidates = sorted(
             [
                 (u, v, data["weight"])
-                for u, v, data in G.edges(data=True)
-                if (u, v) not in keep_set
+                for u, v, data in G_original.edges(data=True)
+                if (u, v) not in keep_set and u in displayed_nodes and v in displayed_nodes
             ],
             key=lambda e: (-e[2], str(e[0]), str(e[1])),
         )
@@ -300,22 +303,25 @@ def prune_edges_connectivity_preserving(
 
     # ── PASS 3: orphan guardrail ──────────────────────────────────────────
     # A node is "orphaned" if it has no incident edge in keep_set at all
-    # (neither as source nor as target — degree 0 in undirected sense).
+    # AND it was originally in displayed_nodes.
     incident: set = set()
     for u, v in keep_set:
         incident.add(u)
         incident.add(v)
-    orphans = sorted(all_nodes - incident)  # sorted for determinism
+    orphans = sorted(displayed_nodes - incident)  # sorted for determinism
 
     orphan_fixes = 0
     for node in orphans:
-        # Collect all incident edges (in + out) from the original graph.
+        # Collect all incident edges (in + out) from G_original
+        # where the OTHER endpoint is also in displayed_nodes.
         candidates = [
             (u, v, data["weight"])
-            for u, v, data in G.out_edges(node, data=True)
+            for u, v, data in G_original.out_edges(node, data=True)
+            if v in displayed_nodes
         ] + [
             (u, v, data["weight"])
-            for u, v, data in G.in_edges(node, data=True)
+            for u, v, data in G_original.in_edges(node, data=True)
+            if u in displayed_nodes
         ]
         if not candidates:
             continue  # truly isolated in the original — leave it
@@ -349,7 +355,7 @@ def prune_edges_connectivity_preserving(
 
 # ---------- Rendering (same styling as old script) ----------
 def build_markov_graph(user_label, edges_df, event_freq, output_path,
-                       title_suffix="", normalize_probs=True,
+                       G_original=None, title_suffix="", normalize_probs=True,
                        teams_in_cluster=None, config=None):
     edges_df = edges_df.copy()
     edges_df = edges_df[edges_df["count"] > 0]
@@ -366,11 +372,6 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
         else:
             G.add_edge(a, b, weight=w)
 
-    # Probabilities
-    for u, v in G.edges():
-        total = sum(G[u][x]["weight"] for x in G.successors(u))
-        G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0
-
     # ---- Edge pruning (z-score + connectivity repair) ----
     z_min              = getattr(config, "z_min",               1.0)
     top_k              = getattr(config, "top_k",               1)
@@ -378,13 +379,28 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
 
     if preserve_conn:
         keep_set = prune_edges_connectivity_preserving(
-            G, z_min=z_min, top_k=top_k, user_label=user_label
+            G, G_original=G_original if G_original is not None else G,
+            z_min=z_min, top_k=top_k, user_label=user_label
         )
+        
+        # Sync G with keep_set to ensure bridge edges render,
+        # and pull weights from G_original.
+        for u, v in keep_set:
+            if not G.has_edge(u, v):
+                w = 0.0
+                if G_original and G_original.has_edge(u, v):
+                    w = G_original[u][v]["weight"]
+                G.add_edge(u, v, weight=w)
     else:
         # Legacy path: simple z-score only, no connectivity guarantee.
         keep_set = prune_edges_by_zscore(G, z_min=z_min, top_k=top_k)
         print(f"[PRUNE] {user_label}: {G.number_of_edges()} edges "
               f"→ {len(keep_set)} kept  (connectivity repair disabled)")
+
+    # ---- Probabilities ----
+    for u, v in G.edges():
+        total = sum(G[u][x]["weight"] for x in G.successors(u))
+        G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0
 
     # Draw
     dot = Digraph(comment=f"Markov — {user_label}", format="png")
@@ -489,11 +505,22 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
 
         # Overall (no START/END expected)
         t_overall = overall_df[overall_df["team_number"] == team_str][["from", "to", "count"]].copy()
+        
+        # Build G_overall to be passed to avg_session
+        G_overall = nx.DiGraph()
+        for _, row in t_overall.iterrows():
+            a, b, w = str(row["from"]), str(row["to"]), float(row["count"])
+            if G_overall.has_edge(a, b):
+                G_overall[a][b]["weight"] += w
+            else:
+                G_overall.add_edge(a, b, weight=w)
+
         build_markov_graph(
             user_label=f"Team {team_str}",
             edges_df=t_overall,
             event_freq=event_freq,
             output_path=os.path.join(out_overall_dir, f"team{team_str}_overall.png"),
+            G_original=G_overall,
             title_suffix=f"Overall • {category_label}",
             config=config,
         )
@@ -505,6 +532,7 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             edges_df=t_avg,
             event_freq=event_freq,
             output_path=os.path.join(out_avg_dir, f"team{team_str}_avg_session.png"),
+            G_original=G_overall,
             title_suffix=f"Avg Session • {category_label}",
             config=config,
         )
@@ -576,11 +604,20 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
         cdir = os.path.join(out_clusters_dir, f"cluster{human_cluster}")
         ensure_dir(cdir)
 
+        # Also compute cluster_overall_edges from overall_df
+        # We don't have this globally passed yet, so we will fall back or pass None
+        # In a richer refactor we'd pass overall_df into render_cluster_graphs. We will
+        # use cluster_edges as G_original for now.
+        G_cluster = nx.DiGraph()
+        for _, row in cluster_edges.iterrows():
+            G_cluster.add_edge(str(row["from"]), str(row["to"]), weight=float(row["count"]))
+
         build_markov_graph(
             user_label=f"Cluster {human_cluster}",
             edges_df=cluster_edges,
             event_freq=cluster_freq,
             output_path=os.path.join(cdir, "cluster_avg_session.png"),
+            G_original=G_cluster,
             title_suffix=f"Z-filtered Avg Session • {category_label}",
             teams_in_cluster=teams,
             config=config,
