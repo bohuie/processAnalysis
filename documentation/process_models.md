@@ -46,15 +46,17 @@ System requirement:
 
 ## Configuration Behavior (Current)
 
-The current `process_model/*.py` scripts are configured to process **both datasets automatically** on each run:
+The current `process_model/*.py` scripts are configured to process datasets automatically on each run:
 
 * Branching labels input: `data/graph_labels/clean/CLEAN_year-long-project-team-*_labels_branching_and_structure.csv`
 * PR labels input: `data/csv/CLEAN_pr_labels_year-long-project-team-*.csv`
+* Communication labels input: `data/csv/CLEAN_communication_labels_year-long-project-team-*.csv`
 
 Outputs are written to:
 
 * `data/outputs/branching/`
 * `data/outputs/pr/`
+* `data/outputs/communication/`
 
 No `FILE_SOURCE` or `FOLDER_SOURCE` environment variable is required for the current implementation.
 
@@ -71,7 +73,7 @@ python -m process_model.clustering
 python -m process_model.graphing
 ```
 
-Each module loops over both datasets (`branching`, `pr`) internally. If one dataset is missing required inputs, that dataset is skipped while the other continues.
+Each module loops over configured datasets internally (`branching`, `pr`, `communication`). If one dataset is missing required inputs, that dataset is skipped while the others continue.
 
 ---
 
