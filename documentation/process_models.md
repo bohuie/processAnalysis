@@ -46,6 +46,8 @@ System requirement:
 
 ## Configuration Behavior (Current)
 
+yes—the process_model scripts are now set up to automatically process datasets internally, without manual configuration toggles. They attempt each configured dataset and skip only the one with missing required inputs, while continuing with the others. I also made documentation changes to reflect this behavior. Small note: the current configuration includes three datasets (branching, pr, and communication), not only branching and pr.
+
 The current `process_model/*.py` scripts are configured to process datasets automatically on each run:
 
 * Branching labels input: `data/graph_labels/clean/CLEAN_year-long-project-team-*_labels_branching_and_structure.csv`
