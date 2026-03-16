@@ -1,6 +1,4 @@
-# ============================================================
-# graphing.py — PR Markov Graph Visualizer (CSV -> PNG only)
-# ============================================================
+# process_model/graphing.py
 
 import os
 import argparse
@@ -22,17 +20,22 @@ script_path = Path(__file__).resolve()
 env_path = script_path.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Configuration for both datasets
+# Process ALL datasets every run (no env toggles)
 CONFIGS = {
     "branching": {
         "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
-        "category_label": "branching"
+        "category_label": "branching",
     },
     "pr": {
         "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
-        "category_label": "pr"
-    }
+        "category_label": "pr",
+    },
+    "communication": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "communication"),
+        "category_label": "communication",
+    },
 }
+
 
 # ---------- Tiny utils ----------
 def _wrap_team_list(teams: list[str], max_line_len: int = 70, max_teams: int = 40) -> str:
@@ -68,7 +71,6 @@ def _as_str_team(x) -> str:
     if pd.isna(x):
         return "unknown"
     s = str(x).strip()
-    # handle "7.0" etc
     if s.endswith(".0") and s.replace(".0", "").isdigit():
         return s.replace(".0", "")
     return s
@@ -280,7 +282,7 @@ def prune_edges_connectivity_preserving(
     edges_added_conn = 0
     if n_comp_pass1 > 1:
         # Candidate bridges: original edges NOT already kept,
-        # whose endpoints are BOTH in displayed_nodes, and 
+        # whose endpoints are BOTH in displayed_nodes, and
         # sit in different components.
         # Sort: (-weight, u, v) for determinism on ties.
         candidates = sorted(
@@ -353,7 +355,7 @@ def prune_edges_connectivity_preserving(
     return keep_set
 
 
-# ---------- Rendering (same styling as old script) ----------
+# ---------- Rendering ----------
 def build_markov_graph(user_label, edges_df, event_freq, output_path,
                        G_original=None, title_suffix="", normalize_probs=True,
                        teams_in_cluster=None, config=None):
@@ -373,18 +375,18 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
             G.add_edge(a, b, weight=w)
 
     # ---- Edge pruning (z-score + connectivity repair) ----
-    z_min              = getattr(config, "z_threshold",         0.5)
-    top_k              = 1  # internal default; not exposed as a CLI arg
-    preserve_conn      = getattr(config, "preserve_connectivity", True)
+    z_min         = getattr(config, "z_threshold",          0.5)
+    top_k         = 1  # internal default; not exposed as a CLI arg
+    preserve_conn = getattr(config, "preserve_connectivity", True)
 
     if preserve_conn:
         keep_set = prune_edges_connectivity_preserving(
             G, G_original=G_original if G_original is not None else G,
             z_min=z_min, top_k=top_k, user_label=user_label
         )
-        
+
         # Sync G with keep_set to ensure bridge edges render,
-        # and pull weights from G_original.
+        # pulling weights from G_original.
         for u, v in keep_set:
             if not G.has_edge(u, v):
                 w = 0.0
@@ -397,28 +399,28 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
         print(f"[PRUNE] {user_label}: {G.number_of_edges()} edges "
               f"→ {len(keep_set)} kept  (connectivity repair disabled)")
 
-    # ---- Probabilities ----
+    # ---- Probabilities (computed after G is fully synced) ----
     for u, v in G.edges():
         total = sum(G[u][x]["weight"] for x in G.successors(u))
         G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0
 
     # Draw
     dot = Digraph(comment=f"Markov — {user_label}", format="png")
-    
+
     # Defaults tailored for orientation
     orientation = config.orientation if config else "horizontal"
-    
+
     if orientation == "vertical":
         rankdir = "TB"
         graph_size = config.size if (config and config.size) else "10,14"
         nodesep, ranksep = "0.35", "0.55"
-        font_node, font_edge, font_title = "14", "12", "16"
+        font_node, font_edge = "14", "12"
     else:
         # Default / Horizontal
         rankdir = "LR"
         graph_size = config.size if (config and config.size) else "12,6"
         nodesep, ranksep = "0.3", "0.3"
-        font_node, font_edge, font_title = "12", "10", "14"
+        font_node, font_edge = "12", "10"
 
     dot.attr(
         rankdir=rankdir, size=graph_size, splines="spline",
@@ -437,24 +439,23 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
                 str(node), label="START",
                 fillcolor="#E57373", color="#B71C1C", fontcolor="white",
                 shape="circle", style="filled,bold", penwidth="2",
-                width="0.8", height="0.8", fixedsize="true"
+                width="0.8", height="0.8", fixedsize="true",
             )
         elif node == "END":
             dot.node(
                 str(node), label="END",
                 fillcolor="#81C784", color="#1B5E20", fontcolor="white",
                 shape="doublecircle", style="filled,bold", penwidth="2",
-                width="0.8", height="0.8", fixedsize="true"
+                width="0.8", height="0.8", fixedsize="true",
             )
         else:
-            fillcolor, fontcolor = "#90CAF9", "black"
             cnt = int(event_freq.get(node, 0)) if event_freq else 0
             node_label = str(node).replace("_", "\n")
             label = f"{node_label}\n{cnt}" if cnt > 0 else node_label
             dot.node(
                 str(node), label=label,
-                fillcolor=fillcolor, color="#1E88E5", fontcolor=fontcolor,
-                shape="ellipse", style="filled"
+                fillcolor="#90CAF9", color="#1E88E5", fontcolor="black",
+                shape="ellipse", style="filled",
             )
 
     for u, v, data in G.edges(data=True):
@@ -470,7 +471,6 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
             continue
 
         color = "#0D47A1" if p > 0.4 else "#1565C0" if p > 0.2 else "#64B5F6"
-        # HTML-like label with padding to distance text from the line
         label_html = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD CELLPADDING="4">{p:.2f}</TD></TR></TABLE>>'
         dot.edge(str(u), str(v), label=label_html, color=color, penwidth=str(1.2 + p * 5))
 
@@ -481,7 +481,6 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
         title += "\n" + _wrap_team_list(teams_in_cluster)
 
     dot.attr(label=title, labelloc="t", fontsize="14", fontname="Helvetica-Bold")
-
     dot.graph_attr.update(dpi="400")
 
     ensure_dir(os.path.dirname(output_path))
@@ -490,8 +489,10 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
 
 # ---------- Team graphs ----------
 def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict, out_teams_dir: str, category_label: str, config=None):
-    teams = sorted(set(overall_df["team_number"]).union(set(avg_df["team_number"])),
-                   key=lambda x: int(x) if str(x).isdigit() else 999999)
+    teams = sorted(
+        set(overall_df["team_number"]).union(set(avg_df["team_number"])),
+        key=lambda x: int(x) if str(x).isdigit() else 999999,
+    )
 
     for team in teams:
         team_str = _as_str_team(team)
@@ -503,10 +504,9 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
 
         event_freq = freq_map.get(team_str, {})
 
-        # Overall (no START/END expected)
         t_overall = overall_df[overall_df["team_number"] == team_str][["from", "to", "count"]].copy()
-        
-        # Build G_overall to be passed to avg_session
+
+        # Build G_overall to serve as G_original for the avg-session graph
         G_overall = nx.DiGraph()
         for _, row in t_overall.iterrows():
             a, b, w = str(row["from"]), str(row["to"]), float(row["count"])
@@ -525,7 +525,6 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
             config=config,
         )
 
-        # Avg session (START/END expected)
         t_avg = avg_df[avg_df["team_number"] == team_str][["from", "to", "count"]].copy()
         build_markov_graph(
             user_label=f"Team {team_str}",
@@ -538,8 +537,8 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
         )
 
 
-# ---------- Cluster graphs (optional) ----------
-def _aggregate_cluster_edges(edges_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
+# ---------- Cluster graphs ----------
+def _aggregate_cluster_avg_edges(avg_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
     """
     Session-weighted aggregation over an edge-list DF with columns:
       team_number, from, to, count
@@ -556,7 +555,7 @@ def _aggregate_cluster_edges(edges_df: pd.DataFrame, teams: list[str], sess_coun
             w = 1
         total_weight += w
 
-        sub = edges_df[edges_df["team_number"] == t]
+        sub = avg_df[avg_df["team_number"] == t]
         for _, r in sub.iterrows():
             key = (r["from"], r["to"])
             acc[key] = acc.get(key, 0.0) + float(r["count"]) * w
@@ -576,12 +575,12 @@ def _aggregate_cluster_event_freq(freq_map: dict, teams: list[str]) -> dict:
     return out
 
 
-def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: dict, in_cluster_fp: str, out_clusters_dir: str, category_label: str, config=None):
-    if not os.path.exists(in_cluster_fp):
-        print(f"[INFO] No cluster CSV found at {in_cluster_fp} — skipping cluster graphs.")
+def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict, cluster_fp: str, out_clusters_dir: str, category_label: str, config=None):
+    if not os.path.exists(cluster_fp):
+        print(f"[INFO] No cluster CSV found at {cluster_fp} — skipping cluster graphs.")
         return
 
-    cdf = pd.read_csv(in_cluster_fp, low_memory=False)
+    cdf = pd.read_csv(cluster_fp, low_memory=False)
     required = {"team_number", "cluster_id"}
     if not required.issubset(cdf.columns):
         print("[WARN] Cluster CSV missing required columns — skipping cluster graphs.")
@@ -595,19 +594,14 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
 
     for cluster_id, g in cdf.groupby("cluster_id"):
         teams = sorted(g["team_number"].tolist(), key=lambda x: int(x) if x.isdigit() else 999999)
-
-        cluster_edges = _aggregate_cluster_edges(zfilt_df, teams, sess_count)
+        cluster_edges = _aggregate_cluster_avg_edges(avg_df, teams, sess_count)
         cluster_freq = _aggregate_cluster_event_freq(freq_map, teams)
 
-        # match old naming style: cluster1, cluster2, ...
         human_cluster = int(cluster_id) + 1
         cdir = os.path.join(out_clusters_dir, f"cluster{human_cluster}")
         ensure_dir(cdir)
 
-        # Also compute cluster_overall_edges from overall_df
-        # We don't have this globally passed yet, so we will fall back or pass None
-        # In a richer refactor we'd pass overall_df into render_cluster_graphs. We will
-        # use cluster_edges as G_original for now.
+        # Build G_cluster as G_original for the cluster graph
         G_cluster = nx.DiGraph()
         for _, row in cluster_edges.iterrows():
             G_cluster.add_edge(str(row["from"]), str(row["to"]), weight=float(row["count"]))
@@ -618,10 +612,60 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
             event_freq=cluster_freq,
             output_path=os.path.join(cdir, "cluster_avg_session.png"),
             G_original=G_cluster,
-            title_suffix=f"Z-filtered Avg Session • {category_label}",
+            title_suffix=f"Avg Session • {category_label}",
             teams_in_cluster=teams,
             config=config,
         )
+
+
+def process_dataset(dataset_name: str, output_folder: str, category_label: str, config=None) -> None:
+    print(f"\n{'='*70}")
+    print(f"Processing: {dataset_name}")
+    print(f"{'='*70}")
+
+    in_overall_fp = os.path.join(output_folder, "team_transition_edges_overall.csv")
+    in_avg_fp     = os.path.join(output_folder, "team_transition_edges_avg_session.csv")
+    in_freq_fp    = os.path.join(output_folder, "team_event_frequency.csv")
+    in_sess_fp    = os.path.join(output_folder, "team_transition_sessions_count.csv")
+    in_cluster_fp = os.path.join(output_folder, f"behavior_clusters_{category_label}.csv")
+
+    required = [in_overall_fp, in_avg_fp, in_freq_fp, in_sess_fp]
+    missing = [p for p in required if not os.path.exists(p)]
+    if missing:
+        print("[SKIP] Missing required inputs:")
+        for p in missing:
+            print(f"       - {p}")
+        print("       Run transition_edges.py first.")
+        return
+
+    print("[INFO] Loading data...")
+    overall_df = pd.read_csv(in_overall_fp, low_memory=False)
+    avg_df     = pd.read_csv(in_avg_fp, low_memory=False)
+
+    for df in [overall_df, avg_df]:
+        req_cols = {"team_number", "from", "to", "count"}
+        miss = req_cols - set(df.columns)
+        if miss:
+            raise ValueError(f"Missing columns in input CSV: {miss}")
+        df["team_number"] = df["team_number"].apply(_as_str_team)
+        df["from"]  = df["from"].astype(str)
+        df["to"]    = df["to"].astype(str)
+        df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
+
+    freq_map  = load_event_freq_map(in_freq_fp)
+    sess_count = load_sessions_count_map(in_sess_fp)
+
+    out_base_dir   = output_folder
+    out_clusters_dir = os.path.join(output_folder, "clusters")
+    ensure_dir(out_base_dir)
+
+    print("[INFO] Rendering team graphs...")
+    render_team_graphs(overall_df, avg_df, freq_map, out_base_dir, category_label, config=config)
+
+    print("[INFO] Rendering cluster graphs...")
+    render_cluster_graphs(avg_df, freq_map, sess_count, in_cluster_fp, out_clusters_dir, category_label, config=config)
+
+    print(f"[✅ OK] Graphs written to: {out_base_dir}")
 
 
 def main():
@@ -640,65 +684,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Process both datasets
     for dataset_name, cfg in CONFIGS.items():
-        print(f"\n{'='*70}")
-        print(f"Processing: {dataset_name}")
-        print(f"{'='*70}")
-        
-        pr_out_dir = cfg["output_folder"]
-        category_label = cfg["category_label"]
-        
-        in_overall_fp = os.path.join(pr_out_dir, "team_transition_edges_overall.csv")
-        in_avg_fp = os.path.join(pr_out_dir, "team_transition_edges_avg_session.csv")
-        in_freq_fp = os.path.join(pr_out_dir, "team_event_frequency.csv")
-        in_sess_fp = os.path.join(pr_out_dir, "team_transition_sessions_count.csv")
-        in_cluster_fp = os.path.join(pr_out_dir, f"behavior_clusters_{category_label}.csv")
-        in_zfilt_fp = os.path.join(pr_out_dir, f"team_transition_edges_avg_session_zfiltered_{category_label}.csv")
-        
-        # Check required files
-        required_files = [in_overall_fp, in_avg_fp, in_freq_fp, in_sess_fp, in_cluster_fp, in_zfilt_fp]
-        missing = [f for f in required_files if not os.path.exists(f)]
-        if missing:
-            print(f"[SKIP] Missing required files:")
-            for f in missing:
-                print(f"       - {f}")
-            print(f"       Run clustering.py first")
-            continue
-        
-        print(f"[INFO] Loading data...")
-        overall_df = pd.read_csv(in_overall_fp, low_memory=False)
-        avg_df = pd.read_csv(in_avg_fp, low_memory=False)
-        zfilt_df = pd.read_csv(in_zfilt_fp, low_memory=False)
-
-        # normalize team_number to string
-        for df in [overall_df, avg_df, zfilt_df]:
-            required = {"team_number", "from", "to", "count"}
-            missing_cols = required - set(df.columns)
-            if missing_cols:
-                print(f"[ERROR] Missing columns: {missing_cols}")
-                break
-            df["team_number"] = df["team_number"].apply(_as_str_team)
-            df["from"] = df["from"].astype(str)
-            df["to"] = df["to"].astype(str)
-            df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
-
-        freq_map = load_event_freq_map(in_freq_fp)
-        sess_count = load_sessions_count_map(in_sess_fp)
-        
-        # Setup output directories scoped by dataset (pr or branching)
-        out_base_dir = os.path.join(ROOT, "data", "outputs", category_label)
-        ensure_dir(out_base_dir)
-        out_teams_dir = out_base_dir
-        out_clusters_dir = os.path.join(out_base_dir, "clusters")
-
-        print(f"[INFO] Rendering team graphs...")
-        render_team_graphs(overall_df, avg_df, freq_map, out_teams_dir, category_label, config=args)
-        
-        print(f"[INFO] Rendering cluster graphs...")
-        render_cluster_graphs(zfilt_df, freq_map, sess_count, in_cluster_fp, out_clusters_dir, category_label, config=args)
-
-        print(f"[✅ OK] Graphs written to: {out_base_dir}")
+        process_dataset(dataset_name, cfg["output_folder"], cfg["category_label"], config=args)
 
 
 if __name__ == "__main__":
