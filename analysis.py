@@ -188,17 +188,14 @@ def main():
     # Metrics for PR level
     pr_metrics = ["Number of commits", "Number of files", "Number of lines of code", 
                   "Number of reviews", "Number of comments", "Number of merges"]
+
+    valid_pr_rows = df["Number of PRs"] > 0
     
     for metric in pr_metrics:
-        # Calculate per-PR values for each team
-        per_pr_values = []
-        for _, row in df.iterrows():
-            if row["Number of PRs"] > 0:
-                per_pr_value = row[metric] / row["Number of PRs"]
-                per_pr_values.append(per_pr_value)
+        per_pr_values = df.loc[valid_pr_rows, metric] / df.loc[valid_pr_rows, "Number of PRs"]
         
-        if per_pr_values:
-            pr_level_stats[metric] = (np.mean(per_pr_values), np.std(per_pr_values, ddof=1))
+        if not per_pr_values.empty:
+            pr_level_stats[metric] = (per_pr_values.mean(), per_pr_values.std(ddof=1))
         else:
             pr_level_stats[metric] = (0, 0)
     
