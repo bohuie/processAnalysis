@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 from graphviz import Digraph
+from typing import List, Optional
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
@@ -117,7 +118,7 @@ def build_markov_graph(
     event_freq: dict,
     output_path: str,
     title_suffix: str = "",
-    teams_in_cluster: list[str] | None = None,
+    teams_in_cluster: Optional[List[str]] = None,
     normalize_probs: bool = True,
 ):
     edges_df = edges_df[edges_df["count"] > 0].copy()
