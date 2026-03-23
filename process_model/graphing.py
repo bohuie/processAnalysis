@@ -599,7 +599,7 @@ def main():
         required_files = [in_overall_fp, in_avg_fp, in_zscores_fp, in_freq_fp, in_sess_fp]
         missing = [f for f in required_files if not os.path.exists(f)]
         if missing:
-            print(f"[SKIP] Missing required files:")
+            print(f"[SKIP] Missing required core files:")
             for f in missing:
                 print(f"       - {f}")
             print(f"       Run zscore_calculation.py (and clustering.py for cluster graphs) first")
@@ -614,6 +614,7 @@ def main():
         for df in [overall_df, avg_df, zscores_df]:
             required_cols = {"team_number", "from", "to", "count"}
             missing_cols = required_cols - set(df.columns)
+
             if missing_cols:
                 print(f"[ERROR] Missing columns: {missing_cols}")
                 break
