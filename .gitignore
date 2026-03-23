@@ -20,6 +20,7 @@ data/*
 
 # Virtual Environment files
 venv/
+.venv/
 
 # Ignore specific files
 .DS_Store
