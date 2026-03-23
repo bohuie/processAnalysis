@@ -13,17 +13,20 @@ Env vars:
 
 import os
 import glob
+import base64
 import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import psycopg2
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 
 from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
 from process_model.clustering import main as run_clustering
 from process_model.graphing import main as run_graphing
+from process_model.api import generate_graphs, get_process_stats
 
 app = FastAPI(title="Process Analysis Graph Service", version="1.0.0")
 
@@ -212,6 +215,76 @@ def graphs_metrics():
             "by_dataset": by_dataset,
             "teams_per_dataset": teams_per_dataset,
             "graphs_per_team": graphs_per_team,
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/graphs/programmatic")
+def programmatic_graphs(output_dir: str = "data/outputs/programmatic", csv_path: str = ""):
+    try:
+        graphs = generate_graphs(csv_path=csv_path, output_dir=output_dir)
+        stats = get_process_stats(csv_path=csv_path)
+        return {
+            "graphs": graphs,
+            "stats": stats,
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Programmatic graph generation failed: {exc}")
+
+
+@app.get("/graphs/content")
+def graph_content(
+    graph_id: int | None = None,
+    file_path: str | None = None,
+    encoding: str = "base64",
+):
+    if graph_id is None and not file_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either graph_id or file_path.",
+        )
+
+    normalized_encoding = encoding.lower().strip()
+    if normalized_encoding not in {"base64", "raw"}:
+        raise HTTPException(
+            status_code=400,
+            detail="encoding must be one of: base64, raw",
+        )
+
+    conn = get_conn()
+    try:
+        ensure_table(conn)
+        with conn.cursor() as cur:
+            if graph_id is not None:
+                cur.execute(
+                    "SELECT id, dataset, team, file_path, image, updated_at FROM graphs WHERE id = %s LIMIT 1;",
+                    (graph_id,),
+                )
+            else:
+                cur.execute(
+                    "SELECT id, dataset, team, file_path, image, updated_at FROM graphs WHERE file_path = %s LIMIT 1;",
+                    (file_path,),
+                )
+            row = cur.fetchone()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="Graph not found")
+
+        graph_row_id, dataset, team, resolved_file_path, image_bytes, updated_at = row
+
+        if normalized_encoding == "raw":
+            return Response(content=bytes(image_bytes), media_type="image/png")
+
+        image_base64 = base64.b64encode(bytes(image_bytes)).decode("utf-8")
+        return {
+            "id": graph_row_id,
+            "dataset": dataset,
+            "team": team,
+            "file_path": resolved_file_path,
+            "updated_at": updated_at.isoformat() if updated_at else None,
+            "mime_type": "image/png",
+            "image_base64": image_base64,
         }
     finally:
         conn.close()
