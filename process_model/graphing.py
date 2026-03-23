@@ -362,22 +362,30 @@ def main():
         in_zfilt_fp = os.path.join(pr_out_dir, f"team_transition_edges_avg_session_zfiltered_{category_label}.csv")
         
         # Check required files
-        required_files = [in_overall_fp, in_avg_fp, in_freq_fp, in_sess_fp, in_cluster_fp, in_zfilt_fp]
+        required_files = [in_overall_fp, in_avg_fp]
         missing = [f for f in required_files if not os.path.exists(f)]
         if missing:
-            print(f"[SKIP] Missing required files:")
+            print(f"[SKIP] Missing required core files:")
             for f in missing:
                 print(f"       - {f}")
-            print(f"       Run clustering.py first")
+            print(f"       Run transition_edges.py first")
             continue
         
         print(f"[INFO] Loading data...")
         overall_df = pd.read_csv(in_overall_fp, low_memory=False)
         avg_df = pd.read_csv(in_avg_fp, low_memory=False)
-        zfilt_df = pd.read_csv(in_zfilt_fp, low_memory=False)
+
+        dfs_to_normalize = [overall_df, avg_df]
+        
+        has_clusters = os.path.exists(in_cluster_fp) and os.path.exists(in_zfilt_fp)
+        if has_clusters:
+            zfilt_df = pd.read_csv(in_zfilt_fp, low_memory=False)
+            dfs_to_normalize.append(zfilt_df)
+        else:
+            zfilt_df = pd.DataFrame()
 
         # normalize team_number to string
-        for df in [overall_df, avg_df, zfilt_df]:
+        for df in dfs_to_normalize:
             required = {"team_number", "from", "to", "count"}
             missing_cols = required - set(df.columns)
             if missing_cols:
