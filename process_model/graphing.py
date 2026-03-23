@@ -612,6 +612,8 @@ def main():
         zfilt_df    = pd.read_csv(in_zfilt_fp, low_memory=False) if os.path.exists(in_zfilt_fp) else pd.DataFrame()
 
         for df in [overall_df, avg_df, zscores_df]:
+            if "team_name" in df.columns and "team_number" not in df.columns:
+                df.rename(columns={"team_name": "team_number"}, inplace=True)
             required_cols = {"team_number", "from", "to", "count"}
             missing_cols = required_cols - set(df.columns)
 
@@ -624,6 +626,8 @@ def main():
             df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
 
         if not zfilt_df.empty:
+            if "team_name" in zfilt_df.columns and "team_number" not in zfilt_df.columns:
+                zfilt_df.rename(columns={"team_name": "team_number"}, inplace=True)
             zfilt_df["team_number"] = zfilt_df["team_number"].apply(_as_str_team)
             zfilt_df["from"]  = zfilt_df["from"].astype(str)
             zfilt_df["to"]    = zfilt_df["to"].astype(str)
