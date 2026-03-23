@@ -15,6 +15,9 @@ from pathlib import Path
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
+import sys
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
 
 script_path = Path(__file__).resolve()
 env_path = script_path.parent.parent / '.env'
@@ -520,7 +523,7 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
         print(f"[INFO] No cluster CSV found at {in_cluster_fp} — skipping cluster graphs.")
         return
 
-    cdf = pd.read_csv(cluster_fp, low_memory=False)
+    cdf = pd.read_csv(in_cluster_fp, low_memory=False)
     required = {"team_number", "cluster_id"}
     if not required.issubset(cdf.columns):
         print("[WARN] Cluster CSV missing required columns — skipping cluster graphs.")
@@ -534,7 +537,7 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
 
     for cluster_id, g in cdf.groupby("cluster_id"):
         teams = sorted(g["team_number"].tolist(), key=lambda x: int(x) if x.isdigit() else 999999)
-        cluster_edges = _aggregate_cluster_avg_edges(avg_df, teams, sess_count)
+        cluster_edges = _aggregate_cluster_avg_edges(zfilt_df, teams, sess_count)
         cluster_freq = _aggregate_cluster_event_freq(freq_map, teams)
 
         human_cluster = int(cluster_id) + 1
