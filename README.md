@@ -473,3 +473,33 @@ python test/testApp.py
 ```
 
 ---
+
+## Planned Integration Pipeline with collabAnalysis
+
+To avoid duplicate GitHub data extraction across repositories, the long-term
+architecture will centralize data pulling inside `processAnalysis`.
+
+The intended workflow is:
+
+1. `processAnalysis` pulls GitHub repository data using the GitHub API.
+2. The extracted data is normalized and stored as intermediate artifacts
+   (e.g., CSV/JSON files).
+3. The `processAnalysis` pipeline consumes this data to generate:
+   - PR process graphs
+   - branching pattern graphs
+   - clustering and transition statistics
+4. `collabAnalysis` will also consume the same intermediate dataset to
+   generate collaboration reports and PDF summaries.
+
+This design ensures that GitHub data is extracted once and reused across
+both analysis pipelines.
+
+### High-Level Pipeline
+
+GitHub API  
+   ↓  
+processAnalysis data extraction  
+   ↓  
+Normalized intermediate dataset  
+   ├─> processAnalysis modeling + graphs  
+   └─> collabAnalysis reporting + PDF generation
