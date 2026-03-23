@@ -33,9 +33,6 @@ ROOT        = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-FOLDER_SOURCE = os.getenv("FOLDER_SOURCE", "branching")   # output subdir
-FILE_SOURCE   = os.getenv("FILE_SOURCE",   "branching")   # label CSV source
-
 # ── Label-CSV configs (mirrors transition_edges.py) ────────────────────────
 CONFIGS = {
     "branching": {
@@ -58,7 +55,7 @@ CONFIGS = {
     },
 }
 
-OUTPUT_DIR = os.path.join(ROOT, "data", "outputs", FOLDER_SOURCE)
+OUTPUT_DIR = os.path.join(ROOT, "data", "outputs")
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -239,7 +236,7 @@ def compute_dev_metrics(dev_events: pd.DataFrame) -> dict:
     }
 
 
-def process_team(label_fp: str, config: dict) -> pd.DataFrame:
+def process_team(label_fp: str, config: dict, dataset_name: str) -> pd.DataFrame:
     """Process one team's label CSV and return a per-developer metrics DataFrame."""
     base      = os.path.basename(label_fp)
     m         = config["regex"].match(base)
@@ -278,41 +275,38 @@ def process_team(label_fp: str, config: dict) -> pd.DataFrame:
         if not dev:
             continue
         metrics = compute_dev_metrics(dev_grp[["pr_id", "timestamp", "event"]])
-        rows.append({"team_number": team_number, "developer": dev, **metrics})
+        rows.append({"dataset": dataset_name, "team_number": team_number, "developer": dev, **metrics})
 
     return pd.DataFrame(rows)
 
 
 def main():
-    config = CONFIGS.get(FILE_SOURCE)
-    if config is None:
-        raise ValueError(
-            f"Invalid FILE_SOURCE: '{FILE_SOURCE}'. Must be 'branching' or 'pr'."
-        )
-
-    data_folder    = config["data_folder"]
-    search_pattern = os.path.join(data_folder, f"{config['prefix']}{config['pattern']}")
-    label_files    = sorted(glob.glob(search_pattern))
-
-    print(f"[INFO] FILE_SOURCE   : {FILE_SOURCE}")
-    print(f"[INFO] FOLDER_SOURCE : {FOLDER_SOURCE}")
-    print(f"[INFO] Label files   : {data_folder}")
-    print(f"[INFO] Output dir    : {OUTPUT_DIR}")
-    print(f"[INFO] Found {len(label_files)} label file(s).")
-
-    if not label_files:
-        print("[WARN] No label files found. Check FILE_SOURCE and data directories.")
-        return
-
     all_metrics = []
-    for fp in label_files:
-        print(f"  Processing {os.path.basename(fp)} ...")
-        df = process_team(fp, config)
-        if not df.empty:
-            all_metrics.append(df)
+
+    for dataset_name, config in CONFIGS.items():
+        print(f"\n{'='*70}")
+        print(f"Processing dataset: {dataset_name}")
+        print(f"{'='*70}")
+
+        data_folder    = config["data_folder"]
+        search_pattern = os.path.join(data_folder, f"{config['prefix']}{config['pattern']}")
+        label_files    = sorted(glob.glob(search_pattern))
+
+        print(f"[INFO] Label files   : {data_folder}")
+        print(f"[INFO] Found {len(label_files)} label file(s) for '{dataset_name}'.")
+
+        if not label_files:
+            print(f"[WARN] No label files found for {dataset_name}.")
+            continue
+
+        for fp in label_files:
+            print(f"  Processing {os.path.basename(fp)} ...")
+            df = process_team(fp, config, dataset_name)
+            if not df.empty:
+                all_metrics.append(df)
 
     if not all_metrics:
-        print("[WARN] No metrics generated.")
+        print("\n[WARN] No metrics generated across any config.")
         return
 
     final_df = pd.concat(all_metrics, ignore_index=True)
@@ -321,7 +315,7 @@ def main():
     final_df.to_csv(output_path, index=False)
 
     print(
-        f"\n[SUCCESS] Generated metrics for {len(final_df)} developers "
+        f"\n[SUCCESS] Generated metrics for {len(final_df)} developer records "
         f"across {final_df['team_number'].nunique()} team(s)."
     )
     print(f"Output: {output_path}")
