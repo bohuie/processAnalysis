@@ -1,6 +1,4 @@
-# ============================================================
-# graphing.py — PR Markov Graph Visualizer (CSV -> PNG only)
-# ============================================================
+# process_model/graphing.py
 
 import os
 import argparse
@@ -22,17 +20,22 @@ script_path = Path(__file__).resolve()
 env_path = script_path.parent.parent / '.env'
 load_dotenv(dotenv_path=env_path)
 
-# Configuration for both datasets
+# Process ALL datasets every run (no env toggles)
 CONFIGS = {
     "branching": {
         "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
-        "category_label": "branching"
+        "category_label": "branching",
     },
     "pr": {
         "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
-        "category_label": "pr"
-    }
+        "category_label": "pr",
+    },
+    "communication": {
+        "output_folder": os.path.join(ROOT, "data", "outputs", "communication"),
+        "category_label": "communication",
+    },
 }
+
 
 # ---------- Tiny utils ----------
 def _wrap_team_list(teams: list[str], max_line_len: int = 70, max_teams: int = 40) -> str:
@@ -68,7 +71,6 @@ def _as_str_team(x) -> str:
     if pd.isna(x):
         return "unknown"
     s = str(x).strip()
-    # handle "7.0" etc
     if s.endswith(".0") and s.replace(".0", "").isdigit():
         return s.replace(".0", "")
     return s
@@ -314,23 +316,28 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
     if n_comp_out > 1:
         print(f"[WARN] {user_label}: {n_comp_out} component(s) remain — original graph may be disconnected.")
 
+    # ---- Probabilities (computed after G is fully synced) ----
+    for u, v in G.edges():
+        total = sum(G[u][x]["weight"] for x in G.successors(u))
+        G[u][v]["prob"] = G[u][v]["weight"] / total if normalize_probs and total else 0
+
     # Draw
     dot = Digraph(comment=f"Markov — {user_label}", format="png")
-    
+
     # Defaults tailored for orientation
     orientation = config.orientation if config else "horizontal"
-    
+
     if orientation == "vertical":
         rankdir = "TB"
         graph_size = config.size if (config and config.size) else "10,14"
         nodesep, ranksep = "0.35", "0.55"
-        font_node, font_edge, font_title = "14", "12", "16"
+        font_node, font_edge = "14", "12"
     else:
         # Default / Horizontal
         rankdir = "LR"
         graph_size = config.size if (config and config.size) else "12,6"
         nodesep, ranksep = "0.3", "0.3"
-        font_node, font_edge, font_title = "12", "10", "14"
+        font_node, font_edge = "12", "10"
 
     dot.attr(
         rankdir=rankdir, size=graph_size, splines="spline",
@@ -349,24 +356,23 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
                 str(node), label="START",
                 fillcolor="#E57373", color="#B71C1C", fontcolor="white",
                 shape="circle", style="filled,bold", penwidth="2",
-                width="0.8", height="0.8", fixedsize="true"
+                width="0.8", height="0.8", fixedsize="true",
             )
         elif node == "END":
             dot.node(
                 str(node), label="END",
                 fillcolor="#81C784", color="#1B5E20", fontcolor="white",
                 shape="doublecircle", style="filled,bold", penwidth="2",
-                width="0.8", height="0.8", fixedsize="true"
+                width="0.8", height="0.8", fixedsize="true",
             )
         else:
-            fillcolor, fontcolor = "#90CAF9", "black"
             cnt = int(event_freq.get(node, 0)) if event_freq else 0
             node_label = str(node).replace("_", "\n")
             label = f"{node_label}\n{cnt}" if cnt > 0 else node_label
             dot.node(
                 str(node), label=label,
-                fillcolor=fillcolor, color="#1E88E5", fontcolor=fontcolor,
-                shape="ellipse", style="filled"
+                fillcolor="#90CAF9", color="#1E88E5", fontcolor="black",
+                shape="ellipse", style="filled",
             )
 
     for u, v, data in G.edges(data=True):
@@ -382,7 +388,6 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
             continue
 
         color = "#0D47A1" if p > 0.4 else "#1565C0" if p > 0.2 else "#64B5F6"
-        # HTML-like label with padding to distance text from the line
         label_html = f'<<TABLE BORDER="0" CELLBORDER="0" CELLSPACING="0"><TR><TD CELLPADDING="4">{p:.2f}</TD></TR></TABLE>>'
         dot.edge(str(u), str(v), label=label_html, color=color, penwidth=str(1.2 + p * 5))
 
@@ -393,7 +398,6 @@ def build_markov_graph(user_label, edges_df, event_freq, output_path,
         title += "\n" + _wrap_team_list(teams_in_cluster)
 
     dot.attr(label=title, labelloc="t", fontsize="14", fontname="Helvetica-Bold")
-
     dot.graph_attr.update(dpi="400")
 
     ensure_dir(os.path.dirname(output_path))
@@ -430,6 +434,16 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_zscored_df: pd.DataFrame,
 
         # Overall graph — unfiltered (no z_score file for overall transitions)
         t_overall = overall_df[overall_df["team_number"] == team_str][["from", "to", "count"]].copy()
+
+        # Build G_overall to serve as G_original for the avg-session graph
+        G_overall = nx.DiGraph()
+        for _, row in t_overall.iterrows():
+            a, b, w = str(row["from"]), str(row["to"]), float(row["count"])
+            if G_overall.has_edge(a, b):
+                G_overall[a][b]["weight"] += w
+            else:
+                G_overall.add_edge(a, b, weight=w)
+
         build_markov_graph(
             user_label=f"Team {team_str}",
             edges_df=t_overall,
@@ -457,8 +471,8 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_zscored_df: pd.DataFrame,
         )
 
 
-# ---------- Cluster graphs (optional) ----------
-def _aggregate_cluster_edges(edges_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
+# ---------- Cluster graphs ----------
+def _aggregate_cluster_avg_edges(avg_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
     """
     Session-weighted aggregation over an edge-list DF with columns:
       team_number, from, to, count
@@ -475,7 +489,7 @@ def _aggregate_cluster_edges(edges_df: pd.DataFrame, teams: list[str], sess_coun
             w = 1
         total_weight += w
 
-        sub = edges_df[edges_df["team_number"] == t]
+        sub = avg_df[avg_df["team_number"] == t]
         for _, r in sub.iterrows():
             key = (r["from"], r["to"])
             acc[key] = acc.get(key, 0.0) + float(r["count"]) * w
@@ -506,7 +520,7 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
         print(f"[INFO] No cluster CSV found at {in_cluster_fp} — skipping cluster graphs.")
         return
 
-    cdf = pd.read_csv(in_cluster_fp, low_memory=False)
+    cdf = pd.read_csv(cluster_fp, low_memory=False)
     required = {"team_number", "cluster_id"}
     if not required.issubset(cdf.columns):
         print("[WARN] Cluster CSV missing required columns — skipping cluster graphs.")
@@ -520,14 +534,17 @@ def render_cluster_graphs(zfilt_df: pd.DataFrame, freq_map: dict, sess_count: di
 
     for cluster_id, g in cdf.groupby("cluster_id"):
         teams = sorted(g["team_number"].tolist(), key=lambda x: int(x) if x.isdigit() else 999999)
-
-        cluster_edges = _aggregate_cluster_edges(zfilt_df, teams, sess_count)
+        cluster_edges = _aggregate_cluster_avg_edges(avg_df, teams, sess_count)
         cluster_freq = _aggregate_cluster_event_freq(freq_map, teams)
 
-        # match old naming style: cluster1, cluster2, ...
         human_cluster = int(cluster_id) + 1
         cdir = os.path.join(out_clusters_dir, f"cluster{human_cluster}")
         ensure_dir(cdir)
+
+        # Build G_cluster as G_original for the cluster graph
+        G_cluster = nx.DiGraph()
+        for _, row in cluster_edges.iterrows():
+            G_cluster.add_edge(str(row["from"]), str(row["to"]), weight=float(row["count"]))
 
         build_markov_graph(
             user_label=f"Cluster {human_cluster}",
@@ -559,7 +576,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Process both datasets
     for dataset_name, cfg in CONFIGS.items():
         print(f"\n{'='*70}")
         print(f"Processing: {dataset_name}")
