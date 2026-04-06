@@ -9,6 +9,8 @@ services:
       - AI_MODE=offline
       - OUTPUT_ROOT=/app/data/outputs
       - OLLAMA_HOST=http://llm:11434
+      - API_KEY=dev-secret-key
+
     depends_on:
       - db
       - llm
