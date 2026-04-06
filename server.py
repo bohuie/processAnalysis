@@ -16,14 +16,10 @@ import glob
 import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple
+from process_model.api import run_full_pipeline
 
 import psycopg2
 from fastapi import FastAPI, HTTPException
-
-from process_model.transition_edges import main as run_transition_edges
-from process_model.zscore_calculation import main as run_zscore
-from process_model.clustering import main as run_clustering
-from process_model.graphing import main as run_graphing
 
 app = FastAPI(title="Process Analysis Graph Service", version="1.0.0")
 
@@ -103,11 +99,7 @@ def store_graphs(conn, root: str) -> int:
 
 
 def run_pipeline_and_store():
-    # run full pipeline
-    run_transition_edges()
-    run_zscore()
-    run_clustering()
-    run_graphing()
+    run_full_pipeline()
 
     conn = get_conn()
     try:
