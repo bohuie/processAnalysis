@@ -207,3 +207,21 @@ def graphs_metrics():
         }
     finally:
         conn.close()
+
+
+@app.get("/pipeline/summary")
+def pipeline_summary():
+    try:
+        from process_model.api import get_pipeline_summary
+        return get_pipeline_summary()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to get pipeline summary: {exc}")
+
+
+@app.get("/clusters/stats")
+def clusters_stats():
+    try:
+        from process_model.api import get_cluster_stats
+        return get_cluster_stats()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to get cluster stats: {exc}")
