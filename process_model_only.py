@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv(verbose=False)
 
 from event_labelling.CodeStructure_Branching.main import process_all_teams as process_all_teams_cs
+from event_labelling.Communication.comm_label import process_all_teams as process_all_teams_comm
 from event_labelling.PR.pr_label import process_all_teams as process_all_teams_pr
 from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
@@ -48,10 +49,17 @@ def run_process_model_pipeline() -> dict:
             print("   [OK] Finished PR Analysis\n")
         except Exception as e:
             print(f"   [ERROR] PR analysis error: {e}\n")
+
+        try:
+            print("   • Processing Communication Labels...")
+            process_all_teams_comm()
+            print("   [OK] Finished Communication Analysis\n")
+        except Exception as e:
+            print(f"   [ERROR] Communication analysis error: {e}\n")
         
         # Step 3: Process model analysis
-        print("📊 Step 3: Process Model Analysis (Both Datasets)")
-        print("   Processing for branching AND pr automatically...\n")
+        print("📊 Step 3: Process Model Analysis (All Datasets)")
+        print("   Processing for branching, pr, and communication automatically...\n")
         
         transition_ok = False
         try:
@@ -100,8 +108,9 @@ def run_process_model_pipeline() -> dict:
         print(f"Output locations:")
         print(f"  • Branching analysis: data/outputs/branching/")
         print(f"  • PR analysis: data/outputs/pr/")
+        print(f"  • Communication analysis: data/outputs/communication/")
         print(f"  • Team statistics: data/analysis/")
-        print(f"  • Both datasets processed automatically - no environment variables needed!\n")
+        print(f"  • All datasets processed automatically - no environment variables needed!\n")
         
         return {
             'status': 'completed',

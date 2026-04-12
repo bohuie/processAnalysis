@@ -1,6 +1,8 @@
 # Running Process Analysis Pipeline with Docker
 
-This guide explains how to run the process analysis pipeline (`process_model_only.py`) in Docker with Ollama.
+This guide explains how to run the process-only analysis pipeline (`process_model_only.py`) in Docker with Ollama.
+
+This Docker path does not run extraction. It expects CSV inputs to already exist under `./data/csv/` and then runs labeling, process-model generation, and analysis.
 
 ## Quick Start
 
@@ -14,7 +16,7 @@ This script will:
 1. Build the Docker image
 2. Start Ollama service
 3. Pull the llama3.2:3b model
-4. Run the analysis pipeline
+4. Run the process-only pipeline
 
 ### Option 2: Manual setup
 
@@ -63,6 +65,8 @@ The pipeline uses the following environment variables (set in `docker-compose.pr
 Make sure you have the following before running:
 - Input data in `./data/csv/` or `./data/graph_labels/clean/`
 - `.env` file with any additional configuration (optional)
+
+If you want to extract data from GitHub first, run `python main.py` from the project root instead of the Docker process-only path.
 
 ## Outputs
 

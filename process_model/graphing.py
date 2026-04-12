@@ -1,6 +1,7 @@
 # process_model/graphing.py
 
 import os
+import re
 import pandas as pd
 import numpy as np
 import networkx as nx
@@ -33,6 +34,32 @@ CONFIGS = {
 
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
+
+
+def _clean_team_label(value) -> str:
+    if pd.isna(value):
+        return ""
+    label = str(value).strip()
+    if not label or label.lower() in {"unknown", "unknown-team", "nan"}:
+        return ""
+    return label
+
+
+def _team_key(team_name, team_number) -> str:
+    team_label = _clean_team_label(team_name)
+    if team_label:
+        return team_label
+
+    team_number_label = _as_str_team(team_number)
+    if team_number_label != "unknown":
+        return f"year-long-project-team-{team_number_label}"
+
+    return "unknown-team"
+
+
+def _safe_path_component(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(value)).strip("-")
+    return safe or "unknown-team"
 
 
 def _as_str_team(x) -> str:
@@ -78,17 +105,26 @@ def load_event_freq_map(freq_fp: str) -> dict:
     if not os.path.exists(freq_fp):
         return {}
     df = pd.read_csv(freq_fp, low_memory=False)
-    required = {"team_number", "event", "count"}
+    required = {"event", "count"}
     if not required.issubset(df.columns):
         return {}
 
     df = df.copy()
-    df["team_number"] = df["team_number"].apply(_as_str_team)
+    if "team_name" in df.columns:
+        df["team_key"] = [
+            _team_key(name, number if "team_number" in df.columns else None)
+            for name, number in zip(df.get("team_name", []), df.get("team_number", []))
+        ]
+    elif "team_number" in df.columns:
+        df["team_key"] = df["team_number"].apply(_as_str_team)
+    else:
+        return {}
+
     df["event"] = df["event"].astype(str)
     df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0).astype(int)
 
     out = {}
-    for team, g in df.groupby("team_number"):
+    for team, g in df.groupby("team_key"):
         out[team] = dict(zip(g["event"], g["count"]))
     return out
 
@@ -98,14 +134,23 @@ def load_sessions_count_map(sess_fp: str) -> dict:
     if not os.path.exists(sess_fp):
         return {}
     df = pd.read_csv(sess_fp, low_memory=False)
-    required = {"team_number", "num_pr_sessions"}
+    required = {"num_pr_sessions"}
     if not required.issubset(df.columns):
         return {}
 
     df = df.copy()
-    df["team_number"] = df["team_number"].apply(_as_str_team)
+    if "team_name" in df.columns:
+        df["team_key"] = [
+            _team_key(name, number if "team_number" in df.columns else None)
+            for name, number in zip(df.get("team_name", []), df.get("team_number", []))
+        ]
+    elif "team_number" in df.columns:
+        df["team_key"] = df["team_number"].apply(_as_str_team)
+    else:
+        return {}
+
     df["num_pr_sessions"] = pd.to_numeric(df["num_pr_sessions"], errors="coerce").fillna(0).astype(int)
-    return dict(zip(df["team_number"], df["num_pr_sessions"]))
+    return dict(zip(df["team_key"], df["num_pr_sessions"]))
 
 
 # ============================================================
@@ -238,36 +283,47 @@ def render_team_graphs(
     out_teams_dir: str,
     category_label: str,
 ):
-    teams = sorted(
-        set(overall_df["team_number"]).union(set(avg_df["team_number"])),
-        key=lambda x: int(x) if str(x).isdigit() else 999999,
-    )
+    if "team_name" in overall_df.columns:
+        overall_df = overall_df.copy()
+        avg_df = avg_df.copy()
+        overall_df["team_key"] = [
+            _team_key(name, number) for name, number in zip(overall_df.get("team_name", []), overall_df.get("team_number", []))
+        ]
+        avg_df["team_key"] = [
+            _team_key(name, number) for name, number in zip(avg_df.get("team_name", []), avg_df.get("team_number", []))
+        ]
+    else:
+        overall_df = overall_df.copy()
+        avg_df = avg_df.copy()
+        overall_df["team_key"] = overall_df["team_number"].apply(_as_str_team)
+        avg_df["team_key"] = avg_df["team_number"].apply(_as_str_team)
+
+    teams = sorted(set(overall_df["team_key"]).union(set(avg_df["team_key"])))
 
     for team in teams:
-        team_str = _as_str_team(team)
-        team_dir = os.path.join(out_teams_dir, f"year-long-project-team-{team_str}")
+        team_dir = os.path.join(out_teams_dir, _safe_path_component(team))
         out_overall_dir = os.path.join(team_dir, "team_overall")
         out_avg_dir = os.path.join(team_dir, "team_avg_session")
         ensure_dir(out_overall_dir)
         ensure_dir(out_avg_dir)
 
-        event_freq = freq_map.get(team_str, {})
+        event_freq = freq_map.get(team, {})
 
-        t_overall = overall_df[overall_df["team_number"] == team_str][["from", "to", "count"]].copy()
+        t_overall = overall_df[overall_df["team_key"] == team][["from", "to", "count"]].copy()
         build_markov_graph(
-            user_label=f"Team {team_str}",
+            user_label=f"Team {team}",
             edges_df=t_overall,
             event_freq=event_freq,
-            output_path=os.path.join(out_overall_dir, f"team{team_str}_overall.png"),
+            output_path=os.path.join(out_overall_dir, f"{_safe_path_component(team)}_overall.png"),
             title_suffix=f"Overall • {category_label}",
         )
 
-        t_avg = avg_df[avg_df["team_number"] == team_str][["from", "to", "count"]].copy()
+        t_avg = avg_df[avg_df["team_key"] == team][["from", "to", "count"]].copy()
         build_markov_graph(
-            user_label=f"Team {team_str}",
+            user_label=f"Team {team}",
             edges_df=t_avg,
             event_freq=event_freq,
-            output_path=os.path.join(out_avg_dir, f"team{team_str}_avg_session.png"),
+            output_path=os.path.join(out_avg_dir, f"{_safe_path_component(team)}_avg_session.png"),
             title_suffix=f"Avg Session • {category_label}",
         )
 

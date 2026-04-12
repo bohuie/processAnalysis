@@ -96,7 +96,10 @@ def process_all_teams():
         print(f"[INFO] Please ensure data folder exists in the current directory")
         return
     
-    team_folders = sorted(base_path.glob("year-long-project-team-*"))
+    team_folders = sorted(
+        p for p in base_path.iterdir()
+        if p.is_dir() and not p.name.startswith(".")
+    )
     
     if not team_folders:
         print(f"No team folders found in '{base_path}'")

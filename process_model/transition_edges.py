@@ -16,37 +16,37 @@ ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
 BRANCHING_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "graph_labels", "clean"),
-    "prefix": "CLEAN_year-long-project-team-",
+    "prefix": "CLEAN_",
     "pattern": "*_labels_branching_and_structure.csv",
     "regex": re.compile(
-        r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
+        r"^CLEAN_(.+)_labels_branching_and_structure\.csv$",
         re.IGNORECASE,
     ),
-    "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv",
+    "example": "CLEAN_project-3-analog-gauge-reader-cs_visionaries_labels_branching_and_structure.csv",
     "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
 }
 
 PR_LABELS_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "csv"),
     "prefix": "CLEAN_pr_labels_",
-    "pattern": "year-long-project-team-*.csv",
+    "pattern": "*.csv",
     "regex": re.compile(
-        r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$",
+        r"^CLEAN_pr_labels_(.+)\.csv$",
         re.IGNORECASE,
     ),
-    "example": "CLEAN_pr_labels_year-long-project-team-7.csv",
+    "example": "CLEAN_pr_labels_project-3-analog-gauge-reader-cs_visionaries.csv",
     "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
 }
 
 COMM_CONFIG = {
     "data_folder": os.path.join(ROOT, "data", "csv"),
     "prefix": "CLEAN_communication_labels_",
-    "pattern": "year-long-project-team-*.csv",
+    "pattern": "*.csv",
     "regex": re.compile(
-        r"^CLEAN_communication_labels_(year-long-project-team-\d+)\.csv$",
+        r"^CLEAN_communication_labels_(.+)\.csv$",
         re.IGNORECASE,
     ),
-    "example": "CLEAN_communication_labels_year-long-project-team-7.csv",
+    "example": "CLEAN_communication_labels_project-3-analog-gauge-reader-cs_visionaries.csv",
     "output_folder": os.path.join(ROOT, "data", "outputs", "communication"),
 }
 
@@ -76,8 +76,21 @@ def discover_clean_team_files(config: dict) -> list[str]:
 def parse_team_name_and_number(fp: str, config: dict) -> tuple[str, str]:
     base = os.path.basename(fp)
     m = config["regex"].match(base)
-    team_name = m.group(1) if m else "unknown-team"
+    if m:
+        team_name = m.group(1)
+    else:
+        team_name = base
+        for prefix in ("CLEAN_", config["prefix"]):
+            if team_name.startswith(prefix):
+                team_name = team_name[len(prefix):]
+        for suffix in ("_labels_branching_and_structure.csv", ".csv"):
+            if team_name.endswith(suffix):
+                team_name = team_name[: -len(suffix)]
+        team_name = team_name or "unknown-team"
+
     num_m = re.search(r"team-(\d+)", team_name)
+    if not num_m:
+        num_m = re.search(r"project-(\d+)", team_name)
     team_number = num_m.group(1) if num_m else "unknown"
     return team_name, team_number
 

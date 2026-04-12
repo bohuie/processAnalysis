@@ -15,9 +15,12 @@ def main():
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
     # === FIND TEAM FOLDERS ================================================
-    team_folders = glob.glob(os.path.join(DATA_FOLDER, "year-long-project-team-*"))
+    team_folders = sorted(
+        p for p in glob.glob(os.path.join(DATA_FOLDER, "*"))
+        if os.path.isdir(p) and not os.path.basename(p).startswith(".")
+    )
     if not team_folders:
-        raise FileNotFoundError("No team folders found under data/csv/year-long-project-team-*")
+        raise FileNotFoundError("No team folders found under data/csv/*")
 
     print(f"Found {len(team_folders)} team folders")
     print("="*70)

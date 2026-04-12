@@ -20,7 +20,7 @@ Core scripts:
 
 ## Overview & Purpose
 
-The goal is to build a **team-level behavioral process model** from event sequences (PR labels or branching/structure labels). The pipeline answers questions like:
+The goal is to build a **team-level behavioral process model** from event sequences (PR labels, branching/structure labels, or communication labels). The pipeline answers questions like:
 
 * What event transitions are most common (overall vs per-session average)?
 * Which transitions are **unusually strong** for a team (z-score filtering)?
@@ -46,7 +46,7 @@ System requirement:
 
 ## Configuration Behavior (Current)
 
-yes—the process_model scripts are now set up to automatically process datasets internally, without manual configuration toggles. They attempt each configured dataset and skip only the one with missing required inputs, while continuing with the others. I also made documentation changes to reflect this behavior. Small note: the current configuration includes three datasets (branching, pr, and communication), not only branching and pr.
+The `process_model/*.py` scripts automatically process all configured datasets on each run. Each module skips only datasets with missing required inputs and continues with the rest. The current configuration includes three datasets: branching, pr, and communication.
 
 The current `process_model/*.py` scripts are configured to process datasets automatically on each run:
 
@@ -75,7 +75,7 @@ python -m process_model.clustering
 python -m process_model.graphing
 ```
 
-Each module loops over configured datasets internally (`branching`, `pr`, `communication`). If one dataset is missing required inputs, that dataset is skipped while the others continue.
+Each module loops over the configured datasets internally (`branching`, `pr`, `communication`). If one dataset is missing required inputs, that dataset is skipped while the others continue.
 
 ---
 
@@ -140,7 +140,7 @@ Per `pr_id`, the script builds the ordered event sequence and counts transitions
 Then it adds transition probabilities per `from` state:
 `prob = count / sum(counts from same from-state)`
 
-### Outputs (written to `data/outputs/{branching|pr}/`)
+### Outputs (written to `data/outputs/{branching|pr|communication}/`)
 
 * `team_transition_edges_overall.csv` (includes `from,to,count,prob`)
 * `team_transition_edges_avg_session.csv` (includes `from,to,count,prob`; START/END expected)
@@ -157,7 +157,7 @@ Then it adds transition probabilities per `from` state:
 
 Reads:
 
-* `data/outputs/{branching|pr}/team_transition_edges_avg_session.csv`
+* `data/outputs/{branching|pr|communication}/team_transition_edges_avg_session.csv`
 
 Requires columns:
 
@@ -174,7 +174,7 @@ For each team group, with `count` treated as float:
 
 Writes:
 
-* `data/outputs/{branching|pr}/team_transition_edges_avg_session_zscores.csv`
+* `data/outputs/{branching|pr|communication}/team_transition_edges_avg_session_zscores.csv`
 
 ---
 
@@ -186,7 +186,7 @@ Writes:
 
 Reads:
 
-* `data/outputs/{branching|pr}/team_transition_edges_avg_session_zscores.csv`
+* `data/outputs/{branching|pr|communication}/team_transition_edges_avg_session_zscores.csv`
 
 ### Feature construction
 
@@ -210,7 +210,7 @@ Reads:
 
 Writes:
 
-* `data/outputs/{branching|pr}/behavior_clusters_{branching|pr}.csv`
+* `data/outputs/{branching|pr|communication}/behavior_clusters_{branching|pr|communication}.csv`
 
 Columns include:
 
@@ -225,7 +225,7 @@ Columns include:
 
 **Purpose:** Render **per-team** and **per-cluster** Markov graphs as PNGs using Graphviz.
 
-### Inputs (from `data/outputs/{branching|pr}/`)
+### Inputs (from `data/outputs/{branching|pr|communication}/`)
 
 Required:
 
@@ -243,7 +243,7 @@ Optional/Enhancing:
 For each team, the script writes PNGs into:
 
 ```text
-data/outputs/{branching|pr}/year-long-project-team-{team_number}/
+data/outputs/{branching|pr|communication}/year-long-project-team-{team_number}/
 ├── team_overall/
 │   └── team{N}_overall.png
 └── team_avg_session/
@@ -268,7 +268,7 @@ If cluster CSV exists and has `team_number, cluster_id`, the script aggregates *
 Then writes:
 
 ```text
-data/outputs/{branching|pr}/clusters/
+data/outputs/{branching|pr|communication}/clusters/
 └── cluster{human_cluster_id}/
     └── cluster_avg_session.png
 ```

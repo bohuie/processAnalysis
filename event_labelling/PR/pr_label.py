@@ -71,7 +71,10 @@ REVIEW_LOOKUP_PATH = os.path.join(DATA_FOLDER, "review_timestamp_lookup.csv")
 def process_all_teams() -> None:
     """Main driver: preprocess CSVs and generate PR labels for all teams."""
     # === FIND ALL TEAM FOLDERS =======================================
-    team_folders = glob.glob(os.path.join(DATA_FOLDER, "year-long-project-team-*"))
+    team_folders = sorted(
+        p for p in glob.glob(os.path.join(DATA_FOLDER, "*"))
+        if os.path.isdir(p) and not os.path.basename(p).startswith(".")
+    )
     if not team_folders:
         raise FileNotFoundError(f"❌ No team folders found in {DATA_FOLDER}")
 

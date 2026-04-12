@@ -16,6 +16,7 @@ The workflow consists of several stages — from data extraction to graph genera
 - **Bot Filtering:** Removes automated bot accounts from analysis.
 - **Graph Generation:** Visualizes PR networks, branching behavior, and collaboration patterns.
 - **Statistical Analysis:** Provides summary statistics of repository activity.
+- **Pipeline Modes:** Supports full pipeline runs and process-only reruns.
 
 ---
 
@@ -192,8 +193,8 @@ The `AI_MODE` toggle is used in:
     
          ↓                           ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│ STEP 3: Process Model Analysis (BOTH DATASETS)                  │
-│ Runs 4 substeps for branching AND pr_labels automatically       │
+│ STEP 3: Process Model Analysis (ALL DATASETS)                   │
+│ Runs 4 substeps for branching, pr, and communication            │
 │                                                                 │
 │ 3.1: transition_edges.py   → Build state transitions            │
 │ 3.2: zscore_calculation.py → Normalize counts                   │
@@ -211,7 +212,7 @@ The `AI_MODE` toggle is used in:
 1. **Data Extraction** — Fetches raw PR data from GitHub
 2. **Branching Labeling** — Uses LLM to categorize branch strategies and code patterns
 3. **PR Labeling** — Uses LLM to analyze communication quality and review patterns
-4. **Process Modeling** — Analyzes workflow transitions for both datasets:
+4. **Process Modeling** — Analyzes workflow transitions for all configured datasets:
    - Builds Markov chains: which events follow which
    - Normalizes to find anomalies (z-scores)
    - Clusters teams by similarity
@@ -220,7 +221,7 @@ The `AI_MODE` toggle is used in:
 
 ### 5. Run the Pipeline (main.py)
 
-The project provides a complete end-to-end pipeline with **zero environment variable configuration needed** (except `GITHUB_TOKEN` and `AI_MODE`).
+The project provides a complete end-to-end pipeline. `main.py` uses the repository owner and repository list defined in the file itself, while `scripts/app.py` can be configured separately for extraction-only runs.
 
 #### Run Everything at Once
 
@@ -233,12 +234,14 @@ That's it. `main.py` automatically:
 1. ✅ Extracts PR data from repositories
 2. ✅ Labels branching patterns and code structure
 3. ✅ Labels PR communications and review patterns
-4. ✅ **Processes BOTH branching AND pr_labels datasets simultaneously**
-5. ✅ Generates graphs and analysis for both datasets
+4. ✅ **Processes branching, pr, and communication datasets automatically**
+5. ✅ Generates graphs and analysis for all configured datasets
 
 **Output locations:**
 - Branching analysis: `data/outputs/branching/`
 - PR analysis: `data/outputs/pr/`
+- Communication analysis: `data/outputs/communication/`
+- Team statistics: `data/analysis/`
 
 #### The Modular Way: Run Steps Individually
 
@@ -265,9 +268,9 @@ python -m event_labelling.PR.pr_label
 **What it does:** Analyzes PR descriptions, reviews, and communication patterns
 **Output:** `data/csv/pr_communications_labels_*.csv` + `data/csv/CLEAN_pr_labels_*.csv`
 
-#### Step 3: Process Model Analysis (Automatic for Both Datasets)
+#### Step 3: Process Model Analysis (Automatic for All Datasets)
 ```bash
-# Run the 4-step pipeline - it processes both branching AND pr_labels automatically
+# Run the 4-step pipeline - it processes branching, pr, and communication automatically
 python -m process_model.transition_edges      # Compute state transitions
 python -m process_model.zscore_calculation    # Normalize transition counts
 python -m process_model.clustering            # Identify behavior clusters
@@ -283,6 +286,7 @@ python -m process_model.graphing              # Generate visualization graphs
 **Output locations:**
 - `data/outputs/branching/` - branching-based analysis
 - `data/outputs/pr/` - PR-communication-based analysis
+- `data/outputs/communication/` - communication-based analysis
 
 Each directory contains:
 - `team_transition_edges_overall.csv` - All transitions (aggregated)
@@ -336,7 +340,10 @@ processAnalysis/
 ├── documentation/                     # User-facing documentation
 │   ├── analysis.md
 │   ├── app.md
-│   └── code_structure_and_branching.md
+│   ├── code_structure_and_branching.md
+│   ├── pipeline_modes.md
+│   └── pr_label.md
+├── DOCKER_PROCESS.md                  # Docker-specific process pipeline guide
 ├── src/                               # Core libraries used by scripts
 │   ├── extractors/
 │   │   └── pull_request_extractor.py
@@ -389,10 +396,12 @@ export GITHUB_TOKEN='your_token_here'
 ```
 
 ### Repository Configuration
-Update the following variables in `scripts/app.py`:
-- `REPOSITORIES` - List of repositories to analyze
-- `REPO_OWNER` - Repository owner/username
-- `ORG_NAME` - Organization name (if applicable)
+Update the following settings depending on how you run the project:
+
+- In `scripts/app.py`, edit `REPO_OWNER` and `REPO_NAMES` for extraction-only runs.
+- In `main.py`, edit the hardcoded `repos` list and repository owner if you want the full pipeline to target a different dataset.
+
+The Docker process guide in [DOCKER_PROCESS.md](DOCKER_PROCESS.md) explains the process-only Docker path.
 
 ### Anonymization (Optional)
 If using anonymized data, create a mapping file:

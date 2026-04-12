@@ -9,41 +9,27 @@ load_dotenv(verbose=False)
 
 from scripts.app import run_batch_extraction
 from event_labelling.CodeStructure_Branching.main import process_all_teams as process_all_teams_cs
+from event_labelling.Communication.comm_label import process_all_teams as process_all_teams_comm
 from event_labelling.PR.pr_label import process_all_teams as process_all_teams_pr
 from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
 from process_model.clustering import main as run_clustering
 from process_model.graphing import main as run_graphing
 from analysis import main as run_analysis
+from src.utils.list_repos import get_org_repositories
 
-# Your custom repo list
-repos = [
-    "year-long-project-team-1",
-    "year-long-project-team-2",
-    "year-long-project-team-3",
-    "year-long-project-team-4",
-    "year-long-project-team-5",
-    "year-long-project-team-6",
-    "year-long-project-team-7",
-    "year-long-project-team-8",
-    "year-long-project-team-9",
-    "year-long-project-team-10",
-    "year-long-project-team-11",
-    "year-long-project-team-12",
-    "year-long-project-team-13",
-    "year-long-project-team-14",
-    "year-long-project-team-15",
-    "year-long-project-team-16",
-    "year-long-project-team-17",
-    "year-long-project-team-18",
-    "year-long-project-team-19",
-    "year-long-project-team-20",
-    "year-long-project-team-21",
-    "year-long-project-team-22",
-]
+ORG_NAME = os.getenv("GITHUB_ORG", "UBCO-COSC499-Winter-2018-Term-1-2")
 
 
-def run_full_pipeline(run_id: str = None) -> dict:
+def _load_org_repo_names(org_name: str) -> list[str]:
+    repos = get_org_repositories(org_name)
+    repo_names = sorted({repo.get("name") for repo in repos if repo.get("name")})
+    if not repo_names:
+        raise RuntimeError(f"No repositories found for organization: {org_name}")
+    return repo_names
+
+
+def run_full_pipeline(run_id: str | None = None) -> dict:
     """
     Run the complete analysis pipeline: extraction → labeling → process models → analysis.
     
@@ -63,9 +49,12 @@ def run_full_pipeline(run_id: str = None) -> dict:
         # Step 1: Batch extraction
         print("📊 Step 1: Batch Extraction")
         try:
+            repo_names = _load_org_repo_names(ORG_NAME)
+            print(f"   • Target org: {ORG_NAME}")
+            print(f"   • Repositories discovered: {len(repo_names)}")
             all_results, failed_repos = run_batch_extraction(
-                repo_owner="COSC-499-W2023",
-                repo_names=repos,
+                repo_owner=ORG_NAME,
+                repo_names=repo_names,
                 output_base_dir="./data",
                 save_csv=True,
                 include_commits=True,
@@ -94,10 +83,17 @@ def run_full_pipeline(run_id: str = None) -> dict:
             print("   [OK] Finished PR Analysis\n")
         except Exception as e:
             print(f"   [ERROR] PR analysis error: {e}\n")
+
+        try:
+            print("   • Processing Communication Labels...")
+            process_all_teams_comm()
+            print("   [OK] Finished Communication Analysis\n")
+        except Exception as e:
+            print(f"   [ERROR] Communication analysis error: {e}\n")
         
         # Step 3: Process model analysis
-        print("📊 Step 3: Process Model Analysis (Both Datasets)")
-        print("   Processing for branching AND pr automatically...\n")
+        print("📊 Step 3: Process Model Analysis (All Datasets)")
+        print("   Processing for branching, pr, and communication automatically...\n")
         
         transition_ok = False
         try:
@@ -146,8 +142,9 @@ def run_full_pipeline(run_id: str = None) -> dict:
         print(f"Output locations:")
         print(f"  • Branching analysis: data/outputs/branching/")
         print(f"  • PR analysis: data/outputs/pr/")
+        print(f"  • Communication analysis: data/outputs/communication/")
         print(f"  • Team statistics: data/analysis/")
-        print(f"  • Both datasets processed automatically - no environment variables needed!\n")
+        print(f"  • All datasets processed automatically - no environment variables needed!\n")
         
         return {
             'status': 'completed',
