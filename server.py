@@ -74,6 +74,8 @@ def detect_dataset_and_team(path: str) -> Tuple[str, str]:
     elif "pr" in parts:
         dataset = "pr"
     for p in parts:
+        if p.endswith(".png"):
+            continue
         if p.startswith("year-long-project-team-"):
             team = p
             break
