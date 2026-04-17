@@ -41,3 +41,14 @@ def test_detect_dataset_and_team_keeps_existing_cases():
 
     assert dataset == "branching"
     assert team == "year-long-project-team-3"
+
+
+def test_detect_dataset_and_team_uses_cluster_folder_not_filename():
+    server = _load_server_module()
+
+    dataset, team = server.detect_dataset_and_team(
+        "data/outputs/branching/cluster1/cluster_avg_session.png"
+    )
+
+    assert dataset == "branching"
+    assert team == "cluster1"
