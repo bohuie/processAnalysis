@@ -69,6 +69,8 @@ def detect_dataset_and_team(path: str) -> Tuple[str, str]:
     parts = Path(path).parts
     if "branching" in parts:
         dataset = "branching"
+    elif "communication" in parts:
+        dataset = "communication"
     elif "pr" in parts:
         dataset = "pr"
     for p in parts:
