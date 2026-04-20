@@ -9,7 +9,9 @@ def main():
     """Run team-level analysis and generate summary statistics."""
     # === SETUP ============================================================
     CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-    ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../../"))
+    # analysis.py lives at the project root in this repo, including in Docker (/app).
+    # Using CURRENT_DIR keeps data paths stable across local and container execution.
+    ROOT = CURRENT_DIR
     DATA_FOLDER = os.path.join(ROOT, "data", "csv")
     OUTPUT_FOLDER = os.path.join(ROOT, "data", "analysis")
     os.makedirs(OUTPUT_FOLDER, exist_ok=True)
