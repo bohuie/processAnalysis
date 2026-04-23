@@ -1,3 +1,4 @@
+import os
 import time
 from typing import Dict, Any, Optional
 
@@ -15,6 +16,20 @@ DEFAULT_OPTIONS: Dict[str, Any] = {
     "temperature": 0.2,
     "num_predict": 200,
 }
+
+# Get Ollama host from environment (for Docker/remote instances)
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+
+
+def _get_ollama_client():
+    """Get configured Ollama client instance."""
+    if ollama is None:
+        raise RuntimeError(
+            "[ERROR] ollama package is not installed. "
+            "Install with: pip install ollama"
+        )
+    # Create client with custom host if specified
+    return ollama.Client(host=OLLAMA_HOST)
 
 
 def connect_ollama_offline(
@@ -44,10 +59,11 @@ def connect_ollama_offline(
     
     while True:
         try:
-            print(f"[OLLAMA] Connecting to local Ollama instance...")
+            client = _get_ollama_client()
+            print(f"[OLLAMA] Connecting to Ollama at {OLLAMA_HOST}...")
             print(f"[OLLAMA] Model: {model_name}")
             
-            response = ollama.chat(
+            response = client.chat(
                 model=model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
@@ -89,9 +105,10 @@ def check_ollama_connection(model_name: str = DEFAULT_MODEL_NAME) -> bool:
         return False
     
     try:
-        print(f"[OLLAMA] Checking connection to local Ollama...")
+        client = _get_ollama_client()
+        print(f"[OLLAMA] Checking connection to Ollama at {OLLAMA_HOST}...")
         # Try a simple ping with a very short prompt
-        response = ollama.chat(
+        response = client.chat(
             model=model_name,
             messages=[{"role": "user", "content": "ok"}],
             options={"num_predict": 10},

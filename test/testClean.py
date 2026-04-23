@@ -12,7 +12,7 @@ import shutil
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Import the function to test
-from process_model.clean import clean_and_impute_branch_names
+from src.utils.clean import clean_and_impute_branch_names
 
 
 class TestCleanAndImputeBranchNames:
