@@ -5,12 +5,17 @@ __pycache__
 *.pyd
 *.db
 *.sqlite
+.venv/
+venv/
+env/
+ENV/
 .env
 .env.local
 pytest_cache
 .pytest_cache
 build
 dist
+pip-wheel-metadata/
 node_modules
 .cache
 .eggs
