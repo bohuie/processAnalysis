@@ -473,3 +473,33 @@ python test/testApp.py
 ```
 
 ---
+
+## 🗂️ Full-File Enrichment
+Retrieves the full content of modified files at the head commit of each PR.
+The enriched dataset is used as input for code violation detection.
+
+⚠️ Before running, open `scripts/enrich_full_files.py` and set:
+- `REPO_OWNER` (string)
+- `REPO_NAMES` (string)
+
+Run:
+
+```bash
+python scripts/enrich_full_files.py
+```
+
+---
+
+## 💯 Magic Number Detection
+This project includes a static analysis detector for identifying magic numbers in repository code.
+
+⚠️ Before running, open `src/magic_number/magic_number_runner.py` and set:
+- `REPO_NAME` (string)
+
+Run:
+
+```bash
+python src/magic_number/magic_number_runner.py
+```
+
+---
