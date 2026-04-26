@@ -1,0 +1,40 @@
+services:
+  # Ollama LLM service
+  llm:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Process analysis pipeline
+  process:
+    build: .
+    command: python main.py
+    environment:
+      - AI_MODE=offline
+      - OLLAMA_HOST=http://llm:11434
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      llm:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+      - ./scripts:/app/scripts
+      - ./event_labelling:/app/event_labelling
+      - ./process_model:/app/process_model
+      - ./src:/app/src
+      - ./main.py:/app/main.py
+      - ./analysis.py:/app/analysis.py
+      - ./process_model_only.py:/app/process_model_only.py
+      - ./.env:/app/.env
+
+volumes:
+  ollama_data:
