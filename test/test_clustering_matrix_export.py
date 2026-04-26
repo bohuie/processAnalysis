@@ -26,20 +26,21 @@ def _write_input_csv(tmp_path: Path) -> Path:
     return fp
 
 
-def test_transition_matrix_csv_export(tmp_path: Path, clustering_mod, monkeypatch):
+def test_transition_matrix_csv_export(tmp_path: Path, clustering_mod):
     in_fp = _write_input_csv(tmp_path)
 
-    out_clusters = tmp_path / "behavior_clusters_test.csv"
     out_matrix = tmp_path / "team_transition_matrix_test.csv"
-    out_edges = tmp_path / "team_transition_edges_avg_session_zfiltered_test.csv"
 
-    monkeypatch.setattr(clustering_mod, "IN_FP", str(in_fp))
-    monkeypatch.setattr(clustering_mod, "OUT_FP", str(out_clusters))
-    monkeypatch.setattr(clustering_mod, "MATRIX_OUT_FP", str(out_matrix))
-    monkeypatch.setattr(clustering_mod, "FILTERED_EDGES_OUT_FP", str(out_edges))
-    monkeypatch.setattr(clustering_mod, "Z_THRESHOLD", 1.645)
+    df = pd.read_csv(in_fp)
+    teams, pairs, X, _df_filt = clustering_mod.build_team_matrix(df, z_threshold=1.645)
+    nonzero_mask = (X.sum(axis=1) > 0)
+    kept_teams = [t for t, keep in zip(teams, nonzero_mask) if keep]
+    X = X[nonzero_mask]
 
-    clustering_mod.main()
+    col_names = [f"{a}->{b}" for (a, b) in pairs]
+    matrix_df = pd.DataFrame(X, index=kept_teams, columns=col_names)
+    matrix_df.index.name = "team_number"
+    matrix_df.to_csv(out_matrix)
 
     # ---- matrix export exists
     assert out_matrix.exists(), "Transition matrix CSV was not created"

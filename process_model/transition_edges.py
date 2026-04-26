@@ -1,5 +1,3 @@
-# process_model/transition_edges.py
-
 import os
 import re
 import glob
@@ -15,7 +13,10 @@ from src.utils.markov_common import (
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 
-# Process ALL datasets every run
+# ============================================================
+# CONFIGURATION - Process ALL datasets every run (no env toggles)
+# ============================================================
+
 CONFIGS = {
     "branching": {
         "data_folder": os.path.join(ROOT, "data", "graph_labels", "clean"),
@@ -53,13 +54,19 @@ CONFIGS = {
 }
 
 
+# ============================================================
+# HELPERS
+# ============================================================
+
 def discover_clean_team_files(config: dict) -> list[str]:
     data_folder = config["data_folder"]
     search_pattern = os.path.join(data_folder, f"{config['prefix']}{config['pattern']}")
     files = sorted(set(glob.glob(search_pattern)))
     if not files:
-        print(f"[WARN] No CLEAN label CSVs found in {data_folder}")
-        print(f"       Expected e.g.: {os.path.join(data_folder, config['example'])}")
+        raise FileNotFoundError(
+            f"No CLEAN label CSVs found in {data_folder}\n"
+            f"Expected e.g.: {os.path.join(data_folder, config['example'])}"
+        )
     return files
 
 
@@ -81,6 +88,10 @@ def load_noholes_csv(fp: str) -> pd.DataFrame:
     return explode_and_sort_events(df)
 
 
+# ============================================================
+# MAIN
+# ============================================================
+
 def process_dataset(dataset_name: str, config: dict) -> None:
     print(f"\n{'='*70}")
     print(f"Processing: {dataset_name}")
@@ -89,9 +100,10 @@ def process_dataset(dataset_name: str, config: dict) -> None:
     out_folder = config["output_folder"]
     os.makedirs(out_folder, exist_ok=True)
 
-    files = discover_clean_team_files(config)
-    if not files:
-        print(f"[SKIP] No files found for {dataset_name}")
+    try:
+        files = discover_clean_team_files(config)
+    except FileNotFoundError as e:
+        print(f"[SKIP] {e}")
         return
 
     print(f"[INFO] Found {len(files)} CLEAN team file(s). Output -> {out_folder}")
@@ -120,11 +132,9 @@ def process_dataset(dataset_name: str, config: dict) -> None:
         overall_edges = add_transition_probs(overall_edges)
         avg_edges = add_transition_probs(avg_edges)
 
-        overall_edges.insert(0, "team_name", team_name)
-        overall_edges.insert(1, "team_number", team_number)
-
-        avg_edges.insert(0, "team_name", team_name)
-        avg_edges.insert(1, "team_number", team_number)
+        for df_out in (overall_edges, avg_edges):
+            df_out.insert(0, "team_name", team_name)
+            df_out.insert(1, "team_number", team_number)
 
         all_overall.append(overall_edges)
         all_avg.append(avg_edges)

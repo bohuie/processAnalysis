@@ -39,9 +39,8 @@ def discover_clean_team_files(root: Path) -> list[Path]:
     data_folder = root / "data" / "csv"
     files = sorted(set(data_folder.glob(f"{CLEAN_PREFIX}year-long-project-team-*.csv")))
     if not files:
-        raise FileNotFoundError(
-            f"No CLEAN PR label CSVs found. Expected something like:\n"
-            f"  {(data_folder / 'CLEAN_pr_labels_year-long-project-team-7.csv')}"
+        pytest.skip(
+            "Skipping integration check: no CLEAN PR label CSVs found under data/csv."
         )
     return files
 

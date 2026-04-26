@@ -1,5 +1,3 @@
-# process_model/graphing.py
-
 import os
 import pandas as pd
 import numpy as np
@@ -16,7 +14,12 @@ CONFIGS = {
 }
 
 
+# ============================================================
+# DATA LOADERS
+# ============================================================
+
 def load_event_freq_map(freq_fp: str) -> dict:
+    """Returns: {team_number_str: {event: count_int}}"""
     if not os.path.exists(freq_fp):
         return {}
     df = pd.read_csv(freq_fp, low_memory=False)
@@ -36,6 +39,7 @@ def load_event_freq_map(freq_fp: str) -> dict:
 
 
 def load_sessions_count_map(sess_fp: str) -> dict:
+    """Returns: {team_number_str: num_pr_sessions_int}"""
     if not os.path.exists(sess_fp):
         return {}
     df = pd.read_csv(sess_fp, low_memory=False)
@@ -48,6 +52,10 @@ def load_sessions_count_map(sess_fp: str) -> dict:
     df["num_pr_sessions"] = pd.to_numeric(df["num_pr_sessions"], errors="coerce").fillna(0).astype(int)
     return dict(zip(df["team_number"], df["num_pr_sessions"]))
 
+
+# ============================================================
+# TEAM GRAPHS
+# ============================================================
 
 def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map: dict, out_teams_dir: str, category_label: str):
     teams = sorted(
@@ -84,9 +92,17 @@ def render_team_graphs(overall_df: pd.DataFrame, avg_df: pd.DataFrame, freq_map:
         )
 
 
-def _aggregate_cluster_avg_edges(avg_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
+# ============================================================
+# CLUSTER GRAPHS
+# ============================================================
+
+def _aggregate_cluster_edges(avg_df: pd.DataFrame, teams: list[str], sess_count: dict) -> pd.DataFrame:
+    """
+    Session-weighted cluster avg edges:
+      cluster_avg = sum(team_avg_count * team_sessions) / sum(team_sessions)
+    """
     total_weight = 0
-    acc = {}
+    acc: dict[tuple, float] = {}
 
     for t in teams:
         w = int(sess_count.get(t, 0))
@@ -94,32 +110,39 @@ def _aggregate_cluster_avg_edges(avg_df: pd.DataFrame, teams: list[str], sess_co
             w = 1
         total_weight += w
 
-        sub = avg_df[avg_df["team_number"] == t]
-        for _, r in sub.iterrows():
+        for _, r in avg_df[avg_df["team_number"] == t].iterrows():
             key = (r["from"], r["to"])
             acc[key] = acc.get(key, 0.0) + float(r["count"]) * w
 
     if total_weight <= 0:
         total_weight = 1
 
-    rows = [{"from": a, "to": b, "count": c / total_weight} for (a, b), c in acc.items()]
-    return pd.DataFrame(rows)
+    return pd.DataFrame(
+        [{"from": a, "to": b, "count": c / total_weight} for (a, b), c in acc.items()]
+    )
 
 
 def _aggregate_cluster_event_freq(freq_map: dict, teams: list[str]) -> dict:
-    out = {}
+    out: dict[str, int] = {}
     for t in teams:
         for ev, c in freq_map.get(t, {}).items():
             out[ev] = out.get(ev, 0) + int(c)
     return out
 
 
-def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict, cluster_fp: str, out_clusters_dir: str, category_label: str):
-    if not os.path.exists(cluster_fp):
-        print(f"[INFO] No cluster CSV found at {cluster_fp} — skipping cluster graphs.")
+def render_cluster_graphs(
+    avg_df: pd.DataFrame,
+    freq_map: dict,
+    sess_count: dict,
+    in_cluster_fp: str,
+    out_clusters_dir: str,
+    category_label: str,
+):
+    if not os.path.exists(in_cluster_fp):
+        print(f"[INFO] No cluster CSV found at {in_cluster_fp} — skipping cluster graphs.")
         return
 
-    cdf = pd.read_csv(cluster_fp, low_memory=False)
+    cdf = pd.read_csv(in_cluster_fp, low_memory=False)
     required = {"team_number", "cluster_id"}
     if not required.issubset(cdf.columns):
         print("[WARN] Cluster CSV missing required columns — skipping cluster graphs.")
@@ -133,7 +156,8 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
 
     for cluster_id, g in cdf.groupby("cluster_id"):
         teams = sorted(g["team_number"].tolist(), key=lambda x: int(x) if x.isdigit() else 999999)
-        cluster_edges = _aggregate_cluster_avg_edges(avg_df, teams, sess_count)
+
+        cluster_edges = _aggregate_cluster_edges(avg_df, teams, sess_count)
         cluster_freq = _aggregate_cluster_event_freq(freq_map, teams)
 
         human_cluster = int(cluster_id) + 1
@@ -146,8 +170,13 @@ def render_cluster_graphs(avg_df: pd.DataFrame, freq_map: dict, sess_count: dict
             event_freq=cluster_freq,
             output_path=os.path.join(cdir, "cluster_avg_session.png"),
             title_suffix=f"Avg Session • {category_label}",
+            teams_in_cluster=teams,
         )
 
+
+# ============================================================
+# MAIN
+# ============================================================
 
 def process_dataset(dataset_name: str, output_folder: str, category_label: str) -> None:
     print(f"\n{'='*70}")
@@ -155,22 +184,21 @@ def process_dataset(dataset_name: str, output_folder: str, category_label: str) 
     print(f"{'='*70}")
 
     in_overall_fp = os.path.join(output_folder, "team_transition_edges_overall.csv")
-    in_avg_fp = os.path.join(output_folder, "team_transition_edges_avg_session.csv")
-    in_freq_fp = os.path.join(output_folder, "team_event_frequency.csv")
-    in_sess_fp = os.path.join(output_folder, "team_transition_sessions_count.csv")
+    in_avg_fp     = os.path.join(output_folder, "team_transition_edges_avg_session.csv")
+    in_freq_fp    = os.path.join(output_folder, "team_event_frequency.csv")
+    in_sess_fp    = os.path.join(output_folder, "team_transition_sessions_count.csv")
     in_cluster_fp = os.path.join(output_folder, f"behavior_clusters_{category_label}.csv")
 
-    required = [in_overall_fp, in_avg_fp, in_freq_fp, in_sess_fp]
-    missing = [p for p in required if not os.path.exists(p)]
+    missing = [f for f in [in_overall_fp, in_avg_fp, in_freq_fp, in_sess_fp] if not os.path.exists(f)]
     if missing:
-        print("[SKIP] Missing required inputs:")
-        for p in missing:
-            print(f"       - {p}")
-        print("       Run transition_edges.py first.")
+        print(f"[SKIP] Missing required files:")
+        for f in missing:
+            print(f"       - {f}")
+        print(f"       Run transition_edges.py first.")
         return
 
     overall_df = pd.read_csv(in_overall_fp, low_memory=False)
-    avg_df = pd.read_csv(in_avg_fp, low_memory=False)
+    avg_df     = pd.read_csv(in_avg_fp,     low_memory=False)
 
     for df in [overall_df, avg_df]:
         req_cols = {"team_number", "from", "to", "count"}
@@ -178,11 +206,11 @@ def process_dataset(dataset_name: str, output_folder: str, category_label: str) 
         if miss:
             raise ValueError(f"Missing columns in input CSV: {miss}")
         df["team_number"] = df["team_number"].apply(_as_str_team)
-        df["from"] = df["from"].astype(str)
-        df["to"] = df["to"].astype(str)
+        df["from"]  = df["from"].astype(str)
+        df["to"]    = df["to"].astype(str)
         df["count"] = pd.to_numeric(df["count"], errors="coerce").fillna(0.0).astype(float)
 
-    freq_map = load_event_freq_map(in_freq_fp)
+    freq_map   = load_event_freq_map(in_freq_fp)
     sess_count = load_sessions_count_map(in_sess_fp)
 
     out_clusters_dir = os.path.join(output_folder, "clusters")
@@ -191,7 +219,7 @@ def process_dataset(dataset_name: str, output_folder: str, category_label: str) 
     print("[INFO] Rendering team graphs...")
     render_team_graphs(overall_df, avg_df, freq_map, output_folder, category_label)
 
-    print("[INFO] Rendering cluster graphs...")
+    print(f"[INFO] Rendering cluster graphs...")
     render_cluster_graphs(avg_df, freq_map, sess_count, in_cluster_fp, out_clusters_dir, category_label)
 
     print(f"[✅ OK] Graphs written to: {output_folder}")
