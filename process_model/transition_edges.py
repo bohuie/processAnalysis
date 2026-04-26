@@ -1,11 +1,14 @@
-# process_model/transition_edges.py
-
 import os
 import re
 import glob
-import ast
 import pandas as pd
-import numpy as np
+
+from src.utils.markov_common import (
+    explode_and_sort_events,
+    compute_overall_edges,
+    compute_avg_session_edges,
+    add_transition_probs,
+)
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
@@ -14,46 +17,40 @@ ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "../"))
 # CONFIGURATION - Process ALL datasets every run (no env toggles)
 # ============================================================
 
-BRANCHING_CONFIG = {
-    "data_folder": os.path.join(ROOT, "data", "graph_labels", "clean"),
-    "prefix": "CLEAN_year-long-project-team-",
-    "pattern": "*_labels_branching_and_structure.csv",
-    "regex": re.compile(
-        r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
-        re.IGNORECASE,
-    ),
-    "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv",
-    "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
-}
-
-PR_LABELS_CONFIG = {
-    "data_folder": os.path.join(ROOT, "data", "csv"),
-    "prefix": "CLEAN_pr_labels_",
-    "pattern": "year-long-project-team-*.csv",
-    "regex": re.compile(
-        r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$",
-        re.IGNORECASE,
-    ),
-    "example": "CLEAN_pr_labels_year-long-project-team-7.csv",
-    "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
-}
-
-COMM_CONFIG = {
-    "data_folder": os.path.join(ROOT, "data", "csv"),
-    "prefix": "CLEAN_communication_labels_",
-    "pattern": "year-long-project-team-*.csv",
-    "regex": re.compile(
-        r"^CLEAN_communication_labels_(year-long-project-team-\d+)\.csv$",
-        re.IGNORECASE,
-    ),
-    "example": "CLEAN_communication_labels_year-long-project-team-7.csv",
-    "output_folder": os.path.join(ROOT, "data", "outputs", "communication"),
-}
-
 CONFIGS = {
-    "branching": BRANCHING_CONFIG,
-    "pr_labels": PR_LABELS_CONFIG,
-    "communication": COMM_CONFIG,
+    "branching": {
+        "data_folder": os.path.join(ROOT, "data", "graph_labels", "clean"),
+        "prefix": "CLEAN_year-long-project-team-",
+        "pattern": "*_labels_branching_and_structure.csv",
+        "regex": re.compile(
+            r"^CLEAN_(year-long-project-team-\d+)_labels_branching_and_structure\.csv$",
+            re.IGNORECASE,
+        ),
+        "example": "CLEAN_year-long-project-team-7_labels_branching_and_structure.csv",
+        "output_folder": os.path.join(ROOT, "data", "outputs", "branching"),
+    },
+    "pr": {
+        "data_folder": os.path.join(ROOT, "data", "csv"),
+        "prefix": "CLEAN_pr_labels_",
+        "pattern": "year-long-project-team-*.csv",
+        "regex": re.compile(
+            r"^CLEAN_pr_labels_(year-long-project-team-\d+)\.csv$",
+            re.IGNORECASE,
+        ),
+        "example": "CLEAN_pr_labels_year-long-project-team-7.csv",
+        "output_folder": os.path.join(ROOT, "data", "outputs", "pr"),
+    },
+    "communication": {
+        "data_folder": os.path.join(ROOT, "data", "csv"),
+        "prefix": "CLEAN_communication_labels_",
+        "pattern": "year-long-project-team-*.csv",
+        "regex": re.compile(
+            r"^CLEAN_communication_labels_(year-long-project-team-\d+)\.csv$",
+            re.IGNORECASE,
+        ),
+        "example": "CLEAN_communication_labels_year-long-project-team-7.csv",
+        "output_folder": os.path.join(ROOT, "data", "outputs", "communication"),
+    },
 }
 
 
@@ -82,112 +79,13 @@ def parse_team_name_and_number(fp: str, config: dict) -> tuple[str, str]:
     return team_name, team_number
 
 
-def normalize_event_field(event) -> list[str]:
-    """
-    Normalizes an event cell to a list of event strings.
-      - list string "['a','b']" -> ['a', 'b']
-      - plain string 'a'        -> ['a']
-      - NaN / empty             -> []
-    """
-    if isinstance(event, list):
-        return [str(x).strip() for x in event if str(x).strip()]
-    if pd.isna(event):
-        return []
-    s = str(event).strip()
-    if not s:
-        return []
-    if s.startswith("[") and s.endswith("]"):
-        try:
-            parsed = ast.literal_eval(s)
-            if isinstance(parsed, list):
-                return [str(x).strip() for x in parsed if str(x).strip()]
-            return [str(parsed).strip()]
-        except Exception:
-            return [s]
-    return [s]
-
-
 def load_noholes_csv(fp: str) -> pd.DataFrame:
     df = pd.read_csv(fp, low_memory=False)
     required = {"pr_id", "timestamp", "event"}
     missing = required - set(df.columns)
     if missing:
         raise ValueError(f"{fp} missing columns: {missing}")
-
-    df["pr_id"] = pd.to_numeric(df["pr_id"], errors="coerce").astype("Int64")
-    df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
-    df["_row_idx"] = np.arange(len(df))
-
-    df["event_list"] = df["event"].apply(normalize_event_field)
-    df = df.explode("event_list", ignore_index=True)
-    df["event"] = df["event_list"].astype(str).str.strip()
-
-    df = df.dropna(subset=["pr_id", "timestamp"])
-    df = df[df["event"].ne("")]
-
-    # stable ordering within same timestamp
-    df = df.sort_values(["pr_id", "timestamp", "_row_idx"]).reset_index(drop=True)
-
-    return df[["pr_id", "timestamp", "event"]]
-
-
-# ============================================================
-# EDGE COMPUTATION
-# ============================================================
-
-def compute_overall_edges(df: pd.DataFrame) -> tuple[pd.DataFrame, int]:
-    """
-    Per-PR transitions (no START/END), pooled counts.
-    Returns (edges_df, n_sessions).
-    """
-    edge_counter: dict[tuple, int] = {}
-    n_sessions = 0
-
-    for _, g in df.groupby("pr_id", sort=False):
-        events = g["event"].tolist()
-        if not events:
-            continue
-        n_sessions += 1
-        for a, b in zip(events, events[1:]):
-            edge_counter[(a, b)] = edge_counter.get((a, b), 0) + 1
-
-    edges = pd.DataFrame(
-        [{"from": a, "to": b, "count": c} for (a, b), c in edge_counter.items()]
-    )
-    return edges, n_sessions
-
-
-def compute_avg_session_edges(df: pd.DataFrame, n_sessions: int) -> pd.DataFrame:
-    """
-    Per-PR transitions with START->first and last->END.
-    Counts divided by n_sessions to give per-session averages.
-    """
-    if n_sessions == 0:
-        return pd.DataFrame(columns=["from", "to", "count"])
-
-    edge_counter: dict[tuple, int] = {}
-
-    for _, g in df.groupby("pr_id", sort=False):
-        events = g["event"].tolist()
-        if not events:
-            continue
-        seq = ["START"] + events + ["END"]
-        for a, b in zip(seq, seq[1:]):
-            edge_counter[(a, b)] = edge_counter.get((a, b), 0) + 1
-
-    return pd.DataFrame(
-        [{"from": a, "to": b, "count": c / n_sessions} for (a, b), c in edge_counter.items()]
-    )
-
-
-def add_transition_probs(edges: pd.DataFrame) -> pd.DataFrame:
-    if edges.empty:
-        return edges.assign(prob=[])
-    edges = edges.copy()
-    edges["count"] = edges["count"].astype(float)
-    denom = edges.groupby("from")["count"].transform("sum")
-    edges["prob"] = np.where(denom > 0, edges["count"] / denom, 0.0)
-    return edges
+    return explode_and_sort_events(df)
 
 
 # ============================================================
@@ -214,6 +112,7 @@ def process_dataset(dataset_name: str, config: dict) -> None:
 
     for fp in files:
         team_name, team_number = parse_team_name_and_number(fp, config)
+
         try:
             df = load_noholes_csv(fp)
         except Exception as e:
@@ -240,11 +139,9 @@ def process_dataset(dataset_name: str, config: dict) -> None:
         all_overall.append(overall_edges)
         all_avg.append(avg_edges)
 
-        sessions_rows.append({
-            "team_name": team_name,
-            "team_number": team_number,
-            "num_pr_sessions": int(n_sessions),
-        })
+        sessions_rows.append(
+            {"team_name": team_name, "team_number": team_number, "num_pr_sessions": int(n_sessions)}
+        )
 
     if not all_overall:
         print(f"[WARN] No usable data produced for {dataset_name}")
