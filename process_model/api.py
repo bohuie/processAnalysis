@@ -3,6 +3,10 @@ import glob
 
 import pandas as pd
 
+from event_labelling.CodeStructure_Branching.main import process_all_teams as run_branching_labels
+from event_labelling.Communication.comm_label import process_all_teams as run_comm_labels
+from event_labelling.PR.pr_label import process_all_teams as run_pr_labels
+
 from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
 from process_model.clustering import main as run_clustering
@@ -15,12 +19,50 @@ OUTPUT_ROOT = os.getenv("OUTPUT_ROOT", "data/outputs")
 def run_full_pipeline() -> dict:
     """
     Run the complete pipeline end-to-end:
-    transition edges -> zscore -> clustering -> graphing.
+      1. Event labelling (branching, communication, PR)
+      2. Transition edges
+      3. Z-score calculation
+      4. Clustering
+      5. Graphing
     Returns a summary of what was produced.
+
+    Requires raw data to already be present in data/csv/ (from unified_github_data_pull.py).
     """
+    # Step 1: Event labelling — generates CLEAN_* CSVs
+    print("\n" + "="*70)
+    print("STEP 1a: BRANCHING & STRUCTURE LABELS")
+    print("="*70)
+    run_branching_labels()
+
+    print("\n" + "="*70)
+    print("STEP 1b: COMMUNICATION LABELS")
+    print("="*70)
+    run_comm_labels()
+
+    print("\n" + "="*70)
+    print("STEP 1c: PR LABELS")
+    print("="*70)
+    run_pr_labels()
+
+    # Step 2-5: Process model
+    print("\n" + "="*70)
+    print("STEP 2: TRANSITION EDGES")
+    print("="*70)
     run_transition_edges()
+
+    print("\n" + "="*70)
+    print("STEP 3: Z-SCORE CALCULATION")
+    print("="*70)
     run_zscore()
+
+    print("\n" + "="*70)
+    print("STEP 4: CLUSTERING")
+    print("="*70)
     run_clustering()
+
+    print("\n" + "="*70)
+    print("STEP 5: GRAPHING")
+    print("="*70)
     run_graphing()
 
     return get_pipeline_summary()
@@ -29,8 +71,8 @@ def run_full_pipeline() -> dict:
 def run_process_model_only() -> dict:
     """
     Re-run only clustering and graphing on existing data.
-    Use this when labelled CSVs already exist and you don't
-    need to re-run extraction or zscore steps.
+    Use this when CLEAN CSVs and transition edges already exist
+    and you don't need to re-run labelling or extraction.
     """
     run_clustering()
     run_graphing()

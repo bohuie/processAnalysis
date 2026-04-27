@@ -60,6 +60,37 @@ def test_get_cluster_stats_reads_csv(tmp_path):
     assert result["pr"]["silhouette"] == pytest.approx(0.45)
 
 # ============================================================
+# run_full_pipeline — unit test (mocked, no data needed)
+# ============================================================
+
+def test_run_full_pipeline_calls_all_steps(tmp_path):
+    """
+    Verifies run_full_pipeline calls all labelling and process model steps
+    in the correct order without needing real data on disk.
+    """
+    with patch("process_model.api.run_branching_labels") as mock_branching, \
+         patch("process_model.api.run_comm_labels") as mock_comm, \
+         patch("process_model.api.run_pr_labels") as mock_pr, \
+         patch("process_model.api.run_transition_edges") as mock_te, \
+         patch("process_model.api.run_zscore") as mock_zscore, \
+         patch("process_model.api.run_clustering") as mock_clustering, \
+         patch("process_model.api.run_graphing") as mock_graphing, \
+         patch("process_model.api.get_pipeline_summary", return_value={"total_graphs": 0, "by_dataset": {}}) as mock_summary:
+
+        from process_model.api import run_full_pipeline
+        result = run_full_pipeline()
+
+        mock_branching.assert_called_once()
+        mock_comm.assert_called_once()
+        mock_pr.assert_called_once()
+        mock_te.assert_called_once()
+        mock_zscore.assert_called_once()
+        mock_clustering.assert_called_once()
+        mock_graphing.assert_called_once()
+        mock_summary.assert_called_once()
+        assert "total_graphs" in result
+
+# ============================================================
 # run_full_pipeline / run_process_model_only (integration, opt-in)
 # ============================================================
 
