@@ -28,29 +28,16 @@ services:
       dockerfile: Dockerfile
     command: uvicorn server:app --host 0.0.0.0 --port 8000
     environment:
-      - DATABASE_URL=postgresql://app:app@process-analysis-db:5432/graphs
       - AI_MODE=offline
       - OUTPUT_ROOT=/app/data/outputs
       - OLLAMA_HOST=http://process-analysis-llm:11434
+      - API_KEY=${API_KEY:-dev-secret-key}
     depends_on:
-      - process-analysis-db
       - process-analysis-llm
     volumes:
       - ./data:/app/data
     ports:
       - "8000:8000"
-
-  process-analysis-db:
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=graphs
-      - POSTGRES_USER=app
-      - POSTGRES_PASSWORD=app
-    volumes:
-      - process_analysis_db_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
 
   process-analysis-llm:
     image: ollama/ollama:latest
@@ -61,5 +48,4 @@ services:
       - "11434:11434"
 
 volumes:
-  process_analysis_db_data:
   process_analysis_ollama_data:
