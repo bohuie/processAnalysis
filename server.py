@@ -1,67 +1,64 @@
 """
-FastAPI service to run the analysis pipeline and store generated graph PNGs into Postgres.
-Services expected (docker-compose):
-- app (this service)
-- db (Postgres)
-- llm (Ollama, optional; pipeline uses AI_MODE env toggle)
+FastAPI service to run the analysis pipeline and serve generated graph PNGs from disk.
 
 Env vars:
-  DATABASE_URL=postgresql://user:pass@host:port/dbname
   OUTPUT_ROOT=data/outputs
   AI_MODE=offline|online (pipeline controls)
+  API_KEY=your-secret-key
 """
 
 import os
 import glob
 import datetime
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
-import psycopg2
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from fastapi.responses import Response
+from fastapi.security.api_key import APIKeyHeader
 
+from process_model.api import (
+    run_full_pipeline,
+    get_pipeline_summary,
+    get_cluster_stats,
+)
 from process_model.transition_edges import main as run_transition_edges
 from process_model.zscore_calculation import main as run_zscore
 from process_model.clustering import main as run_clustering
 from process_model.graphing import main as run_graphing
 
-app = FastAPI(title="Process Analysis Graph Service", version="1.0.0")
+app = FastAPI(title="Process Analysis Graph Service", version="2.0.0")
 
 OUTPUT_ROOT = os.getenv("OUTPUT_ROOT", "data/outputs")
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://app:app@db:5432/graphs")
-
-TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS graphs (
-    id SERIAL PRIMARY KEY,
-    dataset TEXT NOT NULL,
-    team TEXT,
-    file_path TEXT UNIQUE NOT NULL,
-    image BYTEA NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-"""
-
-UPSERT_SQL = """
-INSERT INTO graphs (dataset, team, file_path, image, updated_at)
-VALUES (%s, %s, %s, %s, NOW())
-ON CONFLICT (file_path)
-DO UPDATE SET image = EXCLUDED.image, updated_at = NOW();
-"""
+API_KEY = os.getenv("API_KEY", "dev-secret-key")
 
 
-def get_conn():
-    try:
-        return psycopg2.connect(DATABASE_URL)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"DB connection failed: {exc}")
+# ============================================================
+# ERROR HELPERS
+# ============================================================
+
+def error(status: int, code: str, message: str):
+    raise HTTPException(status_code=status, detail={
+        "error": code,
+        "message": message,
+        "status": status,
+    })
 
 
-def ensure_table(conn) -> None:
-    with conn.cursor() as cur:
-        cur.execute(TABLE_SQL)
-    conn.commit()
+# ============================================================
+# AUTH
+# ============================================================
 
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def require_api_key(key: str = Depends(api_key_header)):
+    if key != API_KEY:
+        error(401, "UNAUTHORIZED", "missing or invalid API key")
+
+
+# ============================================================
+# DISK HELPERS
+# ============================================================
 
 def detect_dataset_and_team(path: str) -> Tuple[str, str]:
     dataset = "unknown"
@@ -73,6 +70,8 @@ def detect_dataset_and_team(path: str) -> Tuple[str, str]:
         dataset = "communication"
     elif "pr" in parts:
         dataset = "pr"
+    elif "communication" in parts:
+        dataset = "communication"
     for p in parts:
         if p.endswith(".png"):
             continue
@@ -81,6 +80,7 @@ def detect_dataset_and_team(path: str) -> Tuple[str, str]:
             break
         if p.startswith("cluster"):
             team = p
+            break
     return dataset, team
 
 
@@ -89,133 +89,165 @@ def collect_pngs(root: str) -> List[str]:
     return sorted(glob.glob(pattern, recursive=True))
 
 
-def store_graphs(conn, root: str) -> int:
-    ensure_table(conn)
+def get_graph_list(root: str = OUTPUT_ROOT) -> List[dict]:
+    """
+    Scan the output directory and return a list of graph metadata dicts.
+    Uses the relative file path as the stable identifier (no DB needed).
+    """
     pngs = collect_pngs(root)
-    if not pngs:
-        return 0
-    inserted = 0
-    with conn.cursor() as cur:
-        for fp in pngs:
-            dataset, team = detect_dataset_and_team(fp)
-            with open(fp, "rb") as f:
-                blob = f.read()
-            cur.execute(UPSERT_SQL, (dataset, team, os.path.relpath(fp, root), blob))
-            inserted += 1
-    conn.commit()
-    return inserted
+    result = []
+    for fp in pngs:
+        rel = os.path.relpath(fp, root)
+        dataset, team = detect_dataset_and_team(fp)
+        result.append({
+            "file_path": rel,
+            "dataset": dataset,
+            "team": team,
+        })
+    return result
 
 
-def run_pipeline_and_store():
-    # run full pipeline
-    run_transition_edges()
-    run_zscore()
-    run_clustering()
-    run_graphing()
-
-    conn = get_conn()
-    try:
-        count = store_graphs(conn, OUTPUT_ROOT)
-    finally:
-        conn.close()
-    return count
-
+# ============================================================
+# HEALTH (no auth needed)
+# ============================================================
 
 @app.get("/health")
 def health():
     return {"status": "ok", "timestamp": datetime.datetime.utcnow().isoformat() + "Z"}
 
 
-@app.post("/run")
-def run_and_store():
+# ============================================================
+# PIPELINE
+# ============================================================
+
+@app.post("/pipeline/run", dependencies=[Depends(require_api_key)])
+def pipeline_run():
     try:
-        count = run_pipeline_and_store()
-        return {"status": "ok", "stored": count}
+        summary = run_full_pipeline()
+        return {"status": "ok", "total_graphs": summary["total_graphs"]}
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Pipeline failed: {exc}")
+        error(500, "PIPELINE_FAILED", f"full pipeline failed: {exc}")
 
 
-@app.get("/graphs/count")
-def graphs_count():
-    conn = get_conn()
+@app.post("/pipeline/run/transition-edges", dependencies=[Depends(require_api_key)])
+def pipeline_run_transition_edges():
     try:
-        ensure_table(conn)
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM graphs;")
-            row = cur.fetchone()
-            n = row[0] if row else 0
-        return {"count": n}
-    finally:
-        conn.close()
+        run_transition_edges()
+        return {"status": "ok", "step": "transition_edges"}
+    except Exception as exc:
+        error(500, "PIPELINE_FAILED", f"transition_edges failed: {exc}")
 
 
-@app.get("/graphs/list")
+@app.post("/pipeline/run/zscore", dependencies=[Depends(require_api_key)])
+def pipeline_run_zscore():
+    try:
+        run_zscore()
+        return {"status": "ok", "step": "zscore"}
+    except Exception as exc:
+        error(500, "PIPELINE_FAILED", f"zscore failed: {exc}")
+
+
+@app.post("/pipeline/run/clustering", dependencies=[Depends(require_api_key)])
+def pipeline_run_clustering():
+    try:
+        run_clustering()
+        return {"status": "ok", "step": "clustering"}
+    except Exception as exc:
+        error(500, "PIPELINE_FAILED", f"clustering failed: {exc}")
+
+
+@app.post("/pipeline/run/graphing", dependencies=[Depends(require_api_key)])
+def pipeline_run_graphing():
+    try:
+        run_graphing()
+        return {"status": "ok", "step": "graphing"}
+    except Exception as exc:
+        error(500, "PIPELINE_FAILED", f"graphing failed: {exc}")
+
+
+@app.get("/pipeline/summary", dependencies=[Depends(require_api_key)])
+def pipeline_summary():
+    try:
+        return get_pipeline_summary()
+    except Exception as exc:
+        error(500, "PIPELINE_FAILED", f"failed to get pipeline summary: {exc}")
+
+
+# ============================================================
+# GRAPHS
+# ============================================================
+
+@app.get("/graphs/count", dependencies=[Depends(require_api_key)])
+def graphs_count():
+    try:
+        graphs = get_graph_list()
+        return {"count": len(graphs)}
+    except Exception as exc:
+        error(500, "INTERNAL_ERROR", f"failed to count graphs: {exc}")
+
+
+@app.get("/graphs/list", dependencies=[Depends(require_api_key)])
 def graphs_list(limit: int = 50):
     limit = max(1, min(limit, 500))
-    conn = get_conn()
     try:
-        ensure_table(conn)
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id, dataset, team, file_path, updated_at FROM graphs ORDER BY updated_at DESC LIMIT %s;",
-                (limit,),
-            )
-            rows = cur.fetchall()
-        return {
-            "items": [
-                {
-                    "id": r[0],
-                    "dataset": r[1],
-                    "team": r[2],
-                    "file_path": r[3],
-                    "updated_at": r[4].isoformat() if r[4] else None,
-                }
-                for r in rows
-            ]
-        }
-    finally:
-        conn.close()
+        graphs = get_graph_list()
+        return {"items": graphs[:limit]}
+    except Exception as exc:
+        error(500, "INTERNAL_ERROR", f"failed to list graphs: {exc}")
 
 
-@app.get("/graphs/metrics")
+@app.get("/graphs/metrics", dependencies=[Depends(require_api_key)])
 def graphs_metrics():
-    conn = get_conn()
     try:
-        ensure_table(conn)
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM graphs;")
-            row = cur.fetchone()
-            total_graphs = row[0] if row else 0
+        graphs = get_graph_list()
+        by_dataset: dict = {}
+        graphs_per_team: dict = {}
 
-            cur.execute(
-                "SELECT dataset, COUNT(*) FROM graphs GROUP BY dataset ORDER BY dataset;"
-            )
-            dataset_rows = cur.fetchall()
-
-            cur.execute(
-                "SELECT dataset, team, COUNT(*) FROM graphs GROUP BY dataset, team ORDER BY dataset, team;"
-            )
-            team_rows = cur.fetchall()
-
-        by_dataset: Dict[str, int] = {row[0]: row[1] for row in dataset_rows}
-        teams_per_dataset: Dict[str, int] = {}
-        graphs_per_team: Dict[str, Dict[str, int]] = {}
-
-        for dataset, team, count in team_rows:
+        for g in graphs:
+            dataset = g["dataset"]
+            team = g["team"]
+            by_dataset[dataset] = by_dataset.get(dataset, 0) + 1
             if dataset not in graphs_per_team:
                 graphs_per_team[dataset] = {}
-            graphs_per_team[dataset][team] = count
+            graphs_per_team[dataset][team] = graphs_per_team[dataset].get(team, 0) + 1
 
-        for dataset, team_map in graphs_per_team.items():
-            teams_per_dataset[dataset] = len(team_map)
+        teams_per_dataset = {d: len(teams) for d, teams in graphs_per_team.items()}
 
         return {
-            "total_graphs": total_graphs,
+            "total_graphs": len(graphs),
             "by_dataset": by_dataset,
             "teams_per_dataset": teams_per_dataset,
             "graphs_per_team": graphs_per_team,
         }
-    finally:
-        conn.close()
+    except Exception as exc:
+        error(500, "INTERNAL_ERROR", f"failed to get metrics: {exc}")
+
+
+@app.get("/graphs/image", dependencies=[Depends(require_api_key)])
+def graph_image(path: str):
+    """
+    Serve a PNG by its relative file path.
+    Example: GET /graphs/image?path=pr/year-long-project-team-1/team1_avg_session.png
+    Use /graphs/list to get valid paths.
+    """
+    safe_path = os.path.normpath(os.path.join(OUTPUT_ROOT, path))
+    if not safe_path.startswith(os.path.abspath(OUTPUT_ROOT)):
+        error(400, "INVALID_PATH", "path traversal not allowed")
+    if not os.path.isfile(safe_path):
+        error(404, "NOT_FOUND", f"graph not found: {path}")
+    with open(safe_path, "rb") as f:
+        return Response(content=f.read(), media_type="image/png")
+
+
+# ============================================================
+# CLUSTERS
+# ============================================================
+
+@app.get("/clusters/stats", dependencies=[Depends(require_api_key)])
+def clusters_stats():
+    try:
+        return get_cluster_stats()
+    except Exception as exc:
+        error(500, "PIPELINE_FAILED", f"failed to get cluster stats: {exc}")
