@@ -7,11 +7,11 @@ import os
 # Add parent directory to path to enable imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from process_model.transition_edges import (
+from src.utils.markov_common import (
     normalize_event_field,
-    compute_overall_edges_old_style,
-    compute_avg_session_edges_old_style,
-    add_transition_probs
+    compute_overall_edges as compute_overall_edges_old_style,
+    compute_avg_session_edges as compute_avg_session_edges_old_style,
+    add_transition_probs,
 )
 
 class TestTransitionEdges:

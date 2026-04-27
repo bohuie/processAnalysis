@@ -37,11 +37,11 @@ def normalize_event_field(event):
       - if event looks like a list string: "['a','b']" -> ['a','b']
       - otherwise: 'a' -> ['a']
     """
-    if pd.isna(event):
-        return []
-
     if isinstance(event, list):
         return [str(x).strip() for x in event if str(x).strip()]
+
+    if event is None or (not isinstance(event, str) and pd.isna(event)):
+        return []
 
     s = str(event).strip()
     if not s:

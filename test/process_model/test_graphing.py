@@ -48,7 +48,7 @@ class TestGraphing:
         assert res["1"] == 50
         assert res["2"] == 30
 
-    @patch("process_model.graphing.Digraph")
+    @patch("src.utils.markov_common.Digraph")
     def test_build_markov_graph(self, mock_digraph):
         # Verify it makes calls to graphviz
         mock_dot = MagicMock()

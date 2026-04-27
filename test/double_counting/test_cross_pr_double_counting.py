@@ -1,9 +1,9 @@
 import pandas as pd
 
-from process_model.transition_edges import (
-    load_noholes_csv,
-    compute_overall_edges_old_style,
-    compute_avg_session_edges_old_style,
+from process_model.transition_edges import load_noholes_csv
+from src.utils.markov_common import (
+    compute_overall_edges as compute_overall_edges_old_style,
+    compute_avg_session_edges as compute_avg_session_edges_old_style,
 )
 
 

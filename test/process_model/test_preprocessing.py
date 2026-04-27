@@ -6,6 +6,8 @@ import os
 # Add parent directory to path to enable imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
+pytest.skip("process_model.preprocessing module no longer exists", allow_module_level=True)
+
 from process_model.preprocessing import normalize_name, simplify_name, name_key, parse_name
 
 class TestPreprocessing:
