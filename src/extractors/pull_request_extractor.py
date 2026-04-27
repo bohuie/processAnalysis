@@ -7,6 +7,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from dotenv import load_dotenv
 
+# Extracts full file contents
+import base64
+from urllib.parse import quote
+
 # Import handling with fallbacks for development
 try:
     from src.extractors.git_extractor import GitExtractor
@@ -846,6 +850,43 @@ class PullRequestExtractor(GitExtractor):
             Complete commit dictionary with file changes
         """
         return self.extract_commit_details(commit_sha)
+    
+    # ============================================================================
+    # FULL FILE CONTENT EXTRACTION
+    # ============================================================================
+
+    def extract_file_content_at_ref(self, path: str, ref: str) -> Optional[str]:
+        """
+        Extract full file content at a specific commit SHA.
+
+        Args:
+            path: Repository-relative file path
+            ref: Commit SHA (or other git reference)
+
+        Returns:
+         - File content as a UTF-8 string, or
+          - None (not a text file / too large / not accessible)
+        """
+        safe_path = quote(path)
+        url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/contents/{safe_path}?ref={ref}"
+
+        response = self.make_request_with_backoff(url)
+        if not response:
+            return None
+
+        data = response.json() or {}
+        if data.get("type") != "file":
+            return None
+
+        # Some large files may not have inline content
+        if data.get("encoding") != "base64" or "content" not in data:
+            return None
+
+        try:
+            raw_bytes = base64.b64decode(data["content"])
+            return raw_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            return None
 
 
 # ============================================================================
