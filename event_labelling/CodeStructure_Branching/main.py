@@ -40,6 +40,7 @@ from .label_feature_size import label_feature_size
 from .label_refactor_size import label_refactor_size
 from .label_repo_status import label_repo_status
 from .label_pr_status import label_pr_status
+from src.utils.clean import create_clean_branching_label_csv
 from .clean_lables import process_all_teams as clean_all_teams
 
 # === SETUP ============================================================
@@ -281,6 +282,9 @@ def process_all_teams():
         print("-" * 60)
         print(f"[SUCCESS] Final labels saved to: {output_file}")
         print(f"[SUCCESS] LLM reasoning saved to: {reasoning_file}")
+        
+        # Determine cleaned file path (default behavior of util puts it in a 'clean' subfolder)
+        create_clean_branching_label_csv(str(output_file))
         print(f"[INFO] Total events generated: {len(combined_df)}")
         print("=" * 60)
         

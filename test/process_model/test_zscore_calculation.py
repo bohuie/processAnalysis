@@ -24,8 +24,14 @@ class TestZScoreCalculation:
         
         res = zscore_per_team(df, "team_number")
         
-        # Check Team 1 z-scores
-        t1 = res[res["team_number"] == "1"]
+        # Check Team 1 z-scores. In newer pandas, groupby.apply may omit grouping
+        # columns, so use the original df mask when needed.
+        if "team_number" in res.columns:
+            t1 = res[res["team_number"] == "1"]
+            t2 = res[res["team_number"] == "2"]
+        else:
+            t1 = res.loc[df["team_number"] == "1"]
+            t2 = res.loc[df["team_number"] == "2"]
         assert len(t1) == 3
         # z = (x - mean) / std
         # (10-20)/8.16 = -1.22
@@ -42,7 +48,6 @@ class TestZScoreCalculation:
         np.testing.assert_allclose(zscores, expected, rtol=1e-5)
         
         # Check Team 2 z-scores (std=0 case)
-        t2 = res[res["team_number"] == "2"]
         assert (t2["z_score"] == 0.0).all()
 
     def test_zscore_empty_or_single(self):

@@ -56,6 +56,13 @@ def test_label_vs_source_timestamps(team_number):
 
     label_fp, pr_fp, review_fp = get_team_filepaths(team_number)
 
+    required_files = [label_fp, pr_fp, review_fp]
+    missing = [fp for fp in required_files if not os.path.exists(fp)]
+    if missing:
+        pytest.skip(
+            "Skipping integration check due to missing input files: " + ", ".join(missing)
+        )
+
     # Load all three CSVs
     df_label = pd.read_csv(label_fp)
     df_pr = pd.read_csv(pr_fp)

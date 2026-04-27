@@ -1,6 +1,6 @@
 # Process Models — Transition Edges, Z-Scores, Clustering, Graphing
 
-This document describes the **process-model pipeline** in `process_model/`, which converts “clean” event streams into **Markov transition edges**, normalizes them via **per-team z-scores**, clusters teams into **behavior groups**, and renders **Markov graphs** as PNGs.
+This document describes the **process-model pipeline** in `process_model/`, which converts "clean" event streams into **Markov transition edges**, normalizes them via **per-team z-scores**, clusters teams into **behavior groups**, and renders **Markov graphs** as PNGs.
 
 Run order (required):
 
@@ -24,7 +24,7 @@ The goal is to build a **team-level behavioral process model** from event sequen
 
 - What event transitions are most common (overall vs per-session average)?
 - Which transitions are **unusually strong** for a team (z-score filtering)?
-- Do teams cluster into distinct behavioral “types” based on their transition patterns?
+- Do teams cluster into distinct behavioral "types" based on their transition patterns?
 - What do the resulting Markov graphs look like per team and per cluster?
 
 ---
@@ -44,67 +44,44 @@ System requirement:
 
 ---
 
-## Configuration: `FILE_SOURCE` vs `FOLDER_SOURCE`
+## Configuration Behavior (Current)
 
-This pipeline uses two environment variables (loaded from your repo root `.env`):
+yes—the process_model scripts are now set up to automatically process datasets internally, without manual configuration toggles. They attempt each configured dataset and skip only the one with missing required inputs, while continuing with the others. I also made documentation changes to reflect this behavior. Small note: the current configuration includes three datasets (branching, pr, and communication), not only branching and pr.
 
-### `FILE_SOURCE` (used by `transition_edges.py`)
+The current `process_model/*.py` scripts are configured to process datasets automatically on each run:
 
-Determines **which clean label files** are used as input.
+- Branching labels input: `data/graph_labels/clean/CLEAN_year-long-project-team-*_labels_branching_and_structure.csv`
+- PR labels input: `data/csv/CLEAN_pr_labels_year-long-project-team-*.csv`
+- Communication labels input: `data/csv/CLEAN_communication_labels_year-long-project-team-*.csv`
 
-- `FILE_SOURCE=branching`
-  Reads: `data/graph_labels/clean/CLEAN_year-long-project-team-*_labels_branching_and_structure.csv`
-  Writes outputs to: `data/outputs/branching/`
+Outputs are written to:
 
-- `FILE_SOURCE=pr_labels`
-  Reads: `data/csv/CLEAN_pr_labels_year-long-project-team-*.csv`
-  Writes outputs to: `data/outputs/pr/`
+- `data/outputs/branching/`
+- `data/outputs/pr/`
+- `data/outputs/communication/`
 
-### `FOLDER_SOURCE` (used by `zscore_calculation.py`, `clustering.py`, `graphing.py`)
-
-Determines **which outputs folder** downstream scripts read from and write to:
-
-- `FOLDER_SOURCE=branching` → `data/outputs/branching/`
-- `FOLDER_SOURCE=pr` → `data/outputs/pr/`
-
-**Important pairing rule:**
-
-- If `FILE_SOURCE=branching`, you almost always want `FOLDER_SOURCE=branching`.
-- If `FILE_SOURCE=pr_labels`, you almost always want `FOLDER_SOURCE=pr`.
+No `FILE_SOURCE` or `FOLDER_SOURCE` environment variable is required for the current implementation.
 
 ---
 
 ## Running the Pipeline
 
-### Branching/Structure process models
+### Required Execution Order
 
 ```bash
-export FILE_SOURCE=branching
-export FOLDER_SOURCE=branching
-
 python -m process_model.transition_edges
 python -m process_model.zscore_calculation
 python -m process_model.clustering
 python -m process_model.graphing
 ```
 
-### PR-label process models
-
-```bash
-export FILE_SOURCE=pr_labels
-export FOLDER_SOURCE=pr
-
-python -m process_model.transition_edges
-python -m process_model.zscore_calculation
-python -m process_model.clustering
-python -m process_model.graphing
-```
+Each module loops over configured datasets internally (`branching`, `pr`, `communication`). If one dataset is missing required inputs, that dataset is skipped while the others continue.
 
 ---
 
 ## Stage 1 — Transition Edges (`transition_edges.py`)
 
-**Purpose:** Convert each team’s clean event stream into:
+**Purpose:** Convert each team's clean event stream into:
 
 - **Overall transition edges** (pooled counts across PR sessions; no START/END)
 - **Average session edges** (START/END included; counts divided by number of sessions)
@@ -113,16 +90,16 @@ python -m process_model.graphing
 
 ### Inputs
 
-Depends on `FILE_SOURCE`:
+Runs both inputs each time:
 
-#### `FILE_SOURCE=branching`
+#### Branching dataset
 
 Looks in:
 
 - `data/graph_labels/clean/`
 - filenames like: `CLEAN_year-long-project-team-7_labels_branching_and_structure.csv`
 
-#### `FILE_SOURCE=pr_labels`
+#### PR labels dataset
 
 Looks in:
 
@@ -174,7 +151,7 @@ Then it adds transition probabilities per `from` state:
 
 ## Stage 2 — Z-Score Normalization (`zscore_calculation.py`)
 
-**Purpose:** Normalize transition strengths per team by computing a **z-score over edge counts**, team-by-team. This enables later thresholding (“keep only unusually strong edges”).
+**Purpose:** Normalize transition strengths per team by computing a **z-score over edge counts**, team-by-team. This enables later thresholding ("keep only unusually strong edges").
 
 ### Input
 
@@ -205,7 +182,7 @@ Writes:
 
 **Purpose:** Turn z-scored edges into a team-feature matrix and cluster teams using KMeans.
 
-### Input
+### Clustering Input
 
 Reads:
 
@@ -229,7 +206,7 @@ Reads:
 - Uses `silhouette_score` to pick best `k`
 - If too few teams (`n < 3`), falls back to `k=2` (or returns a trivial cluster assignment if X is too small).
 
-### Output
+### Clustering Output
 
 Writes:
 
@@ -275,7 +252,7 @@ If any of these files are missing, the script degrades gracefully and skips the 
 
 For each team, the script writes PNGs into:
 
-```
+```text
 data/outputs/{branching|pr}/year-long-project-team-{team_number}/
 ├── team_overall/
 │   └── team{N}_overall.png
@@ -286,7 +263,7 @@ data/outputs/{branching|pr}/year-long-project-team-{team_number}/
 This is done by:
 
 - building a directed graph from `from,to,count`
-- converting counts into transition probabilities (per “from” node)
+- converting counts into transition probabilities (per "from" node)
 - drawing nodes; `START` and `END` get special styling; other nodes show event count if available.
 
 **Edge filtering:** transitions with `prob < MIN_EDGE_PROB` are omitted from the graph to keep it readable (this is a visual-only filter).
@@ -300,7 +277,7 @@ If cluster CSV exists and has `team_number, cluster_id`, the script aggregates *
 
 Then writes:
 
-```
+```text
 data/outputs/{branching|pr}/clusters/
 └── cluster{human_cluster_id}/
     └── cluster_avg_session.png
@@ -314,8 +291,8 @@ Note: cluster folders are named `cluster1`, `cluster2`, … (human-friendly), wh
 
 | Symptom                                                             | Likely Cause                                                      | Fix                                                                                                  |
 | ------------------------------------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `No CLEAN label CSVs found...` in transition step                   | `FILE_SOURCE` points to the wrong dataset or files aren’t present | Set `FILE_SOURCE=branching` or `FILE_SOURCE=pr_labels` to match where your CLEAN files actually are. |
-| `Missing required input: ... team_transition_edges_avg_session.csv` | Skipped Stage 1 or wrong `FOLDER_SOURCE`                          | Run `transition_edges` first and ensure `FOLDER_SOURCE` matches the output folder.                   |
+| `No CLEAN label CSVs found...` in transition step                   | Input CLEAN files are missing for one dataset                     | Ensure CLEAN files exist in `data/graph_labels/clean/` (branching) and/or `data/csv/` (PR labels).  |
+| `Missing required input: ... team_transition_edges_avg_session.csv` | Stage 1 was skipped for that dataset                              | Run `transition_edges` first; downstream stages auto-read from `data/outputs/branching` and `data/outputs/pr`. |
 | Clustering drops many teams as all-zero                             | `Z_THRESHOLD` too high for the dataset                            | Lower `Z_THRESHOLD` in `clustering.py` (currently 1.645).                                            |
 | Cluster graphs are skipped                                          | Cluster CSV missing or wrong columns                              | Ensure `behavior_clusters_{suffix}.csv` exists and contains `team_number, cluster_id`.               |
 | Graph rendering fails / no PNGs produced                            | Graphviz system binary not installed                              | Install Graphviz on your OS so `dot.render(...)` can execute.                                        |

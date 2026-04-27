@@ -35,7 +35,7 @@ class TestPreprocessing:
 
         res = parse_name("Madonna")
         assert res["first_name"] == "Madonna"
-        assert res["last_name"] is None
+        assert pd.isna(res["last_name"])
 
         res = parse_name("")
         assert res["first_name"] is None
