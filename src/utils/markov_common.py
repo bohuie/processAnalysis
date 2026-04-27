@@ -37,11 +37,11 @@ def normalize_event_field(event):
       - if event looks like a list string: "['a','b']" -> ['a','b']
       - otherwise: 'a' -> ['a']
     """
-    if pd.isna(event):
-        return []
-
     if isinstance(event, list):
         return [str(x).strip() for x in event if str(x).strip()]
+
+    if event is None or (not isinstance(event, str) and pd.isna(event)):
+        return []
 
     s = str(event).strip()
     if not s:
@@ -137,7 +137,7 @@ def add_transition_probs(edges: pd.DataFrame) -> pd.DataFrame:
 
 
 # ---------- rendering ----------
-def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suffix="", normalize_probs=True):
+def build_markov_graph(user_label, edges_df, event_freq, output_path, title_suffix="", normalize_probs=True, teams_in_cluster=None):
     edges_df = edges_df.copy()
     edges_df = edges_df[edges_df["count"] > 0]
     if edges_df.empty:

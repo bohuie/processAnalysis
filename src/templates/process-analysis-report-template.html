@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: Helvetica, Arial, sans-serif;
+            font-size: 12px;
+            color: #222;
+            margin: 20px 30px;
+        }
+        h1 { font-size: 20px; border-bottom: 2px solid #1565C0; padding-bottom: 4px; color: #1565C0; margin-top: 28px; }
+        h2 { font-size: 15px; color: #0D47A1; margin-top: 22px; }
+        h3 { font-size: 13px; color: #1976D2; margin-top: 14px; margin-bottom: 6px; }
+        .meta { color: #666; font-size: 11px; margin-bottom: 20px; }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 14px;
+        }
+        th {
+            background-color: #1565C0;
+            color: white;
+            padding: 6px 8px;
+            text-align: left;
+            font-size: 11px;
+        }
+        td {
+            padding: 5px 8px;
+            border: 1px solid #ccc;
+            font-size: 11px;
+            vertical-align: top;
+        }
+        tr:nth-child(even) td { background-color: #F5F5F5; }
+        .section-break { page-break-before: always; }
+        .graph-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 14px;
+        }
+        .graph-card {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            text-align: center;
+            background: #FAFAFA;
+            width: 46%;
+        }
+        .graph-card img {
+            max-width: 100%;
+            height: auto;
+            max-height: 260px;
+            object-fit: contain;
+        }
+        .graph-card .caption { font-size: 10px; color: #555; margin-top: 4px; }
+        .cluster-grid { display: flex; flex-wrap: wrap; gap: 14px; }
+        .cluster-card {
+            border: 1px solid #90CAF9;
+            border-radius: 4px;
+            padding: 8px;
+            text-align: center;
+            background: #E3F2FD;
+            width: 46%;
+        }
+        .cluster-card img {
+            max-width: 100%;
+            height: auto;
+            max-height: 260px;
+            object-fit: contain;
+        }
+        .cluster-card .caption { font-size: 10px; color: #0D47A1; margin-top: 4px; }
+        .highlight-box {
+            border: 1px solid #1565C0;
+            border-radius: 4px;
+            padding: 10px 14px;
+            margin: 6px 0;
+            background: #E8F5E9;
+        }
+        .highlight-box.low { background: #FFF3E0; border-color: #E65100; }
+        .no-data { color: #999; font-style: italic; font-size: 11px; }
+        .dataset-label {
+            display: inline-block;
+            background: #1565C0;
+            color: white;
+            border-radius: 3px;
+            padding: 2px 8px;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .flex-row { display: flex; gap: 16px; }
+        .flex-row > * { flex: 1; }
+
+        /* Per-team section */
+        .team-section {
+            border: 1px solid #BBDEFB;
+            border-radius: 6px;
+            padding: 14px 16px;
+            margin-bottom: 24px;
+            background: #FAFAFA;
+        }
+        .team-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 10px;
+        }
+        .team-title {
+            font-size: 15px;
+            font-weight: bold;
+            color: #0D47A1;
+        }
+        .badge {
+            display: inline-block;
+            border-radius: 3px;
+            padding: 2px 8px;
+            font-size: 10px;
+            font-weight: bold;
+            letter-spacing: 0.4px;
+        }
+        .badge-high { background: #C8E6C9; color: #1B5E20; }
+        .badge-low  { background: #FFE0B2; color: #BF360C; }
+
+        /* Metric pills row */
+        .metric-pills {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+        .pill {
+            background: #E3F2FD;
+            border: 1px solid #90CAF9;
+            border-radius: 20px;
+            padding: 4px 12px;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+        .pill strong { color: #0D47A1; }
+
+        /* Dataset sub-section within a team */
+        .dataset-block { margin-top: 10px; }
+        .dataset-block-title {
+            font-size: 11px;
+            font-weight: bold;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 2px;
+        }
+    </style>
+</head>
+<body>
+
+<!-- =========================================================
+     COVER
+     ========================================================= -->
+<h1 style="margin-top:0;">Process &amp; Collaboration Analysis Report</h1>
+<p class="meta">
+    Generated: {{ generated_at }}
+    &nbsp;|&nbsp;
+    PA datasets: branching, PR, communication
+    &nbsp;|&nbsp;
+    Teams analysed: {{ team_deep_dives | length }}
+    &nbsp;|&nbsp;
+    Total graphs: {{ total_graphs }}
+</p>
+
+<!-- =========================================================
+     1. INDUSTRIAL METRICS (TABLE 2)
+     ========================================================= -->
+<h1>1. Industrial Metrics — Aggregate Project Characteristics</h1>
+<p style="font-size:11px;">
+    Mean (standard deviation) across all teams.
+    PR Statistics columns are per-PR averages; a dash (—) means the metric is
+    not applicable at that level.
+</p>
+
+{% if table2_rows %}
+<table>
+    <thead>
+        <tr>
+            <th>Characteristic</th>
+            <th>Project Statistics (mean, SD)</th>
+            <th>PR Statistics (mean, SD)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in table2_rows %}
+        <tr>
+            <td>{{ row['Characteristic'] }}</td>
+            <td>{{ row['Project Statistics'] }}</td>
+            <td>{{ row['PR Statistics'] if row['PR Statistics'] else '—' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p class="no-data">table2_statistics.csv not found — run the PA pipeline first.</p>
+{% endif %}
+
+<!-- =========================================================
+     2. PER-TEAM ANALYSIS
+         Each team: metric pills + CA stats + all Markov graphs
+     ========================================================= -->
+<div class="section-break"></div>
+<h1>2. Per-Team Analysis</h1>
+<p style="font-size:11px;">
+    Individual metrics, collaboration summary, and Markov process model graphs
+    for each team across all three datasets (branching, PR, communication).
+    <b>Overall</b> — all transitions across the full project lifetime.
+    <b>Avg Session</b> — average transition probabilities per PR session.
+    Edge labels are transition probabilities (0 → 1); thicker/darker edges are more frequent.
+</p>
+
+{% if team_deep_dives %}
+    {% for team in team_deep_dives %}
+    <div class="team-section">
+
+        <!-- Team header + badge -->
+        <div class="team-header">
+            <span class="team-title">{{ team['display_name'] }}</span>
+            {% if team['extreme_label'] == 'Most Productive' %}
+            <span class="badge badge-high">Most Productive</span>
+            {% elif team['extreme_label'] == 'Least Productive' %}
+            <span class="badge badge-low">Least Productive</span>
+            {% endif %}
+        </div>
+
+        <!-- Metric pills -->
+        {% if team['metrics'] %}
+        <div class="metric-pills">
+            <div class="pill"><strong>Branches</strong> {{ team['metrics']['Number of branches'] | int }}</div>
+            <div class="pill"><strong>PRs</strong> {{ team['metrics']['Number of PRs'] | int }}</div>
+            <div class="pill"><strong>Commits</strong> {{ team['metrics']['Number of commits'] | int }}</div>
+            <div class="pill"><strong>Files</strong> {{ team['metrics']['Number of files'] | int }}</div>
+            <div class="pill"><strong>Lines of Code</strong> {{ "{:,}".format(team['metrics']['Number of lines of code'] | int) }}</div>
+            <div class="pill"><strong>Reviews</strong> {{ team['metrics']['Number of reviews'] | int }}</div>
+            <div class="pill"><strong>Comments</strong> {{ team['metrics']['Number of comments'] | int }}</div>
+            <div class="pill"><strong>Merges</strong> {{ team['metrics']['Number of merges'] | int }}</div>
+            {% if team['ca'] %}
+            <div class="pill"><strong>CA PRs</strong> {{ team['ca']['pr_count'] }}</div>
+            <div class="pill"><strong>CA Commits</strong> {{ team['ca']['commit_count'] }}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Markov graphs per dataset -->
+        {% for ds_name in ['branching', 'pr', 'communication'] %}
+        {% set ds_graphs = team['graphs'].get(ds_name, {}) %}
+        {% if ds_graphs.get('overall_b64') or ds_graphs.get('avg_b64') %}
+        <div class="dataset-block">
+            <div class="dataset-block-title">{{ ds_name }} process model</div>
+            <div class="graph-grid">
+                {% if ds_graphs.get('overall_b64') %}
+                <div class="graph-card">
+                    <img src="data:image/png;base64,{{ ds_graphs['overall_b64'] }}"
+                         alt="{{ team['name'] }} {{ ds_name }} overall">
+                    <div class="caption">Overall transitions</div>
+                </div>
+                {% endif %}
+                {% if ds_graphs.get('avg_b64') %}
+                <div class="graph-card">
+                    <img src="data:image/png;base64,{{ ds_graphs['avg_b64'] }}"
+                         alt="{{ team['name'] }} {{ ds_name }} avg session">
+                    <div class="caption">Average session transitions</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+
+        {% if not team['graphs'] %}
+        <p class="no-data">No process model graphs found for this team — run the PA pipeline first.</p>
+        {% endif %}
+
+    </div>
+    {% endfor %}
+{% else %}
+<p class="no-data">No team data found — run the PA pipeline first.</p>
+{% endif %}
+
+<!-- =========================================================
+     3. CLUSTER ANALYSIS
+     ========================================================= -->
+<div class="section-break"></div>
+<h1>3. Cluster Analysis — Behaviour Groups</h1>
+<p style="font-size:11px;">
+    Teams are grouped by similar development process patterns.
+    Each graph shows the session-weighted average Markov transition
+    probabilities for all teams in that cluster.
+</p>
+
+{% if cluster_sections %}
+    {% for cs in cluster_sections %}
+    <h2>
+        <span class="dataset-label">{{ cs['name'] }}</span>
+    </h2>
+    <div class="cluster-grid">
+        {% for cl in cs['clusters'] %}
+        {% if cl['b64'] %}
+        <div class="cluster-card">
+            <img src="data:image/png;base64,{{ cl['b64'] }}" alt="{{ cl['name'] }}">
+            <div class="caption">{{ cl['name'] | replace('cluster', 'Cluster ') }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endfor %}
+{% else %}
+<p class="no-data">No cluster graphs found — run the PA pipeline with enough teams to form clusters.</p>
+{% endif %}
+
+<!-- =========================================================
+     4. COLLABORATION SUMMARY (CA data)
+     ========================================================= -->
+<div class="section-break"></div>
+<h1>4. Collaboration Summary — GitHub Data</h1>
+<p style="font-size:11px;">
+    Extracted by <code>scripts/unified_github_data_pull.py</code> and exported
+    to CA via <code>scripts/export_to_repos.py</code> — single GitHub API pass,
+    same repos as the PA pipeline. Commit count is derived from PR-linked commits.
+</p>
+
+{% if ca_repo_stats %}
+<table>
+    <thead>
+        <tr>
+            <th>Repository</th>
+            <th>Pull Requests</th>
+            <th>Commits (PR-linked)</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in ca_repo_stats %}
+        <tr>
+            <td>{{ row['repo'] }}</td>
+            <td>{{ row['pr_count'] }}</td>
+            <td>{{ row['commit_count'] }}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+            <td><strong>Total</strong></td>
+            <td><strong>{{ ca_repo_stats | sum(attribute='pr_count') }}</strong></td>
+            <td><strong>{{ ca_repo_stats | sum(attribute='commit_count') }}</strong></td>
+        </tr>
+    </tbody>
+</table>
+{% else %}
+<p class="no-data">
+    No CA JSON data found. Run <code>scripts/unified_github_data_pull.py</code> to extract
+    and export the data before generating the report.
+</p>
+{% endif %}
+
+</body>
+</html>

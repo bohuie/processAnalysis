@@ -4,9 +4,7 @@ from event_labelling.CodeStructure_Branching.label_features_per_branch import (
     label_features_per_branch,
 )
 from event_labelling.CodeStructure_Branching.label_pr_status import label_pr_status
-from process_model.transition_edges import (
-    compute_overall_edges_old_style,
-)
+from src.utils.markov_common import compute_overall_edges as compute_overall_edges_old_style
 
 
 def edge_count(edges_df: pd.DataFrame, src: str, dst: str) -> float:
