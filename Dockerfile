@@ -6,6 +6,12 @@ RUN apt-get update && \
         graphviz \
         libpq-dev \
         gcc \
+        wkhtmltopdf \
+        xfonts-75dpi \
+        xfonts-base \
+        libfontconfig1 \
+        libxrender1 \
+        libxext6 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
