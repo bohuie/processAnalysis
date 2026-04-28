@@ -5,27 +5,14 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://app:app@db:5432/graphs
       - AI_MODE=offline
       - OUTPUT_ROOT=/app/data/outputs
       - OLLAMA_HOST=http://llm:11434
+      - API_KEY=dev-secret-key
     depends_on:
-      - db
       - llm
     volumes:
       - ./data:/app/data
-
-  db:
-    image: postgres:15
-    restart: unless-stopped
-    environment:
-      - POSTGRES_DB=graphs
-      - POSTGRES_USER=app
-      - POSTGRES_PASSWORD=app
-    volumes:
-      - db_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
 
   llm:
     image: ollama/ollama:latest
@@ -36,5 +23,4 @@ services:
       - ollama_data:/root/.ollama
 
 volumes:
-  db_data:
   ollama_data:
