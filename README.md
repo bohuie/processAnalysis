@@ -334,6 +334,61 @@ Each directory contains:
 
 ---
 
+## Unified Data Pipeline (PA → CA)
+
+This feature eliminates duplicate GitHub API calls by pulling data once in processAnalysis (PA), then exporting it into collabAnalysis (CA) for local-first loading.
+
+### Prerequisites
+
+**Repo structure** — `processAnalysis` and `collabAnalysis` must be sibling directories under the same parent folder. The export script targets `../collabAnalysis/data/` by default and will fail silently if the repos are in different locations:
+
+```
+parent-folder/
+├── processAnalysis/   ← this repo
+└── collabAnalysis/    ← must be here
+```
+
+**CA branch** — Step 3 requires `src/loaders/local_data_loader.py`, which only exists on the `feat/Unified-Data-Pull` branch in collabAnalysis. Check that branch out first:
+
+```bash
+cd ../collabAnalysis
+git checkout feat/Unified-Data-Pull
+cd ../processAnalysis
+```
+
+### How to Run
+
+#### Step 1: Run unified extraction (PA)
+```bash
+python scripts/unified_github_data_pull.py \
+  --repo-owner COSC-499-W2023 \
+  --repo-name year-long-project-team-15
+```
+
+#### Step 2: Export to CA
+```bash
+python scripts/export_to_repos.py \
+  --repo-name year-long-project-team-15
+```
+
+#### Step 3: Verify CA local loading
+```bash
+cd ../collabAnalysis
+
+python -c "
+from src.loaders.local_data_loader import LocalDataLoader
+l = LocalDataLoader('COSC-499-W2023', 'year-long-project-team-15')
+print('can_load:', l.can_load_locally())
+print('PRs:', len(l.load_pull_requests()))
+"
+```
+
+### Notes
+- Use `--force` on either script to overwrite existing files.
+- Comments and weekly logs still use CA's GitHub API extractors (not yet exported by this pipeline).
+
+---
+
 ## Environment Variables Reference
 
 This is the **complete list** of all environment variables used by the project. Keep this in your `.env` file at the repo root.
